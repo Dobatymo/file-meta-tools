@@ -7,7 +7,7 @@ from xml.etree.ElementTree import iterparse
 from datetime import datetime
 from itertools import chain
 
-from genutility.filesystem import scandir_rec, uncabspath, FileProperties
+from genutility.filesystem import scandir_rec, FileProperties
 from genutility.hash import crc32_hash_file
 from genutility.torrent import iter_torrent
 from genutility.args import existing_path
@@ -81,28 +81,32 @@ def iter_dir(path, extra=True):
 	""" Returns correct device id and file inode for py > 3.5 on windows if `extras=True` """
 
 	for entry in scandir_rec(path, files=True, dirs=True, relative=True):
-		abspath = os.path.join(path, entry.path)
 
 		if extra:
-			stat = os.stat(abspath)
+			stat = os.stat(entry.abspath)
 		else:
 			stat = entry.stat()
 
 		modtime = datetime.utcfromtimestamp(stat.st_mtime)
 
-		yield FileProperties(entry.path, stat.st_size, entry.is_dir(), abspath, (stat.st_dev, stat.st_ino), modtime)
+		yield FileProperties(entry.path, stat.st_size, entry.is_dir(), entry.abspath, (stat.st_dev, stat.st_ino), modtime)
 
-def iter_syncthing(path, versions=".stversions"):
+def iter_syncthing(path, extra=True, versions=".stversions"):
 	""" skips syncthing versions folder """
 
-	for entry in scandir_rec(path, files=True, dirs=True, relative=True):
+	for entry in scandir_rec(path, files=True, dirs=True, relative=True, allow_skip=True):
 		if entry.name == versions and entry.is_dir():
 			entry.follow = False
 			continue
-		stat = entry.stat()
+
+		if extra:
+			stat = os.stat(entry.abspath)
+		else:
+			stat = entry.stat()
+
 		modtime = datetime.utcfromtimestamp(stat.st_mtime)
-		abspath = os.path.join(path, entry.path)
-		yield FileProperties(entry.path, stat.st_size, entry.is_dir(), abspath, (stat.st_dev, stat.st_ino), modtime)
+
+		yield FileProperties(entry.path, stat.st_size, entry.is_dir(), entry.abspath, (stat.st_dev, stat.st_ino), modtime)
 
 def files_to_csv(files, csvpath):
 	# types: (Iterable[FileProperties], str) -> None
