@@ -76,7 +76,7 @@ def iter_archive(archivefile, topleveldir=None):
 		assert False, "Unsupported archive format"
 
 def iter_dir(path, extra=True):
-	# types: (str, bool) -> Iterator[FileProperties]
+	# type: (str, bool) -> Iterator[FileProperties]
 
 	""" Returns correct device id and file inode for py > 3.5 on windows if `extras=True` """
 
@@ -109,7 +109,7 @@ def iter_syncthing(path, extra=True, versions=".stversions"):
 		yield FileProperties(entry.path, stat.st_size, entry.is_dir(), entry.abspath, (stat.st_dev, stat.st_ino), modtime)
 
 def files_to_csv(files, csvpath):
-	# types: (Iterable[FileProperties], str) -> None
+	# type: (Iterable[FileProperties], str) -> None
 
 	with open(csvpath, "w", newline="", encoding="utf-8") as csvfile:
 		csvwriter = csv.writer(csvfile)
@@ -168,14 +168,14 @@ def compare(a, b, left=True, right=True, both=True, ignore=None):
 						print("bo:", "no hash or abspath for same size files", key)
 
 def iterable_to_dict_by_key(by, it):
-	# types: (Iterable[FileProperties], ) -> Dict[str, tuple]
+	# type: (Iterable[FileProperties], ) -> Dict[str, tuple]
 
 	# todo: check if there are duplicated keys and warn about them
 
 	return {getattr(props, by): props for props in it}
 
 def find_type(path):
-	# types: (Path, ) -> Callable
+	# type: (Path, ) -> Callable
 
 	if path.is_dir():
 		return iter_dir
