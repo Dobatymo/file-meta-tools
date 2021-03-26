@@ -1,2 +1,4 @@
-genutility
-ferutility
+colorama>=0.4.4
+genutility>=0.0.71
+rarfile>=4.0
+requests>=2.25.1

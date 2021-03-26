@@ -1,6 +1,12 @@
-from compare import iter_dir, iter_syncthing, iterable_to_dict_by_key, compare
+from typing import TYPE_CHECKING
+
+from compare import compare, iter_dir, iter_syncthing, iterable_to_dict_by_key
+
+if TYPE_CHECKING:
+	from genutility.filesystem import FileProperties
 
 def clean_syncthing_versioning(props):
+	# type: (FileProperties, ) -> FileProperties
 
 	if not props.isdir:
 		base, dateandext = props.relpath.rsplit("~", 1)

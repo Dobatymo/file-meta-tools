@@ -1,5 +1,10 @@
 # compare
 
+## Requirements
+
+- Python 3.8+
+- `pip install requirements.txt`
+
 ## some examples
 
 ### compare rom dat file to collection on archive.org

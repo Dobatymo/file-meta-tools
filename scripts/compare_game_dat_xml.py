@@ -1,7 +1,13 @@
-from future.utils import viewkeys
-from genutility.file import read_file
+from __future__ import generator_stop
+
+from typing import TYPE_CHECKING
 
 from ..compare import iter_archiveorg_xml, iter_gamedat_xml
+
+if TYPE_CHECKING:
+	from typing import Iterable
+
+	from genutility.filesystem import FileProperties
 
 def strs_in_str(strings, s):
 	for string in strings:
@@ -10,6 +16,8 @@ def strs_in_str(strings, s):
 	return False
 
 def split_gamedat(it):
+	# type: (Iterable[FileProperties], ) -> None
+
 	asia_strs = ["(Japan)", "(Korea)"]
 	usa_strs = ["(USA)"]
 	europe_strs = ["(Europe)", "(Australia)", "(Europe, Australia)", "(Germany)", "(France)", "(UK)", "(Spain)", "(Italy)", "(Sweden)", "(Netherlands)"]
@@ -43,11 +51,11 @@ def do(country_str, archive_set, dat_dict):
 	print()
 
 	print("only in archive_xml")
-	only_archive = archive_set - viewkeys(dat_dict)
+	only_archive = archive_set - dat_dict.keys()
 	print(len(only_archive), only_archive)
 
 	print("only in game_dat")
-	only_dat =  viewkeys(dat_dict) - archive_set
+	only_dat = dat_dict.keys() - archive_set
 	for sha1 in only_dat:
 		print(sha1, dat_dict[sha1])
 

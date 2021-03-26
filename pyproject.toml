@@ -1,0 +1,3 @@
+[tool.isort]
+indent = "tab"
+line_length = 120
