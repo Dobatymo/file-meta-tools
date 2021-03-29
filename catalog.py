@@ -1,7 +1,10 @@
 import logging
-import os
+import platform
 import sqlite3
 from builtins import print as _print
+from os import fspath, stat
+from pathlib import Path
+from string import ascii_uppercase
 from typing import TYPE_CHECKING
 
 from genutility.filesystem import scandir_rec
@@ -11,20 +14,34 @@ from genutility.sqlite import batch_executer
 from genutility.win.file import is_open_for_write
 
 if TYPE_CHECKING:
-	from typing import Dict, List, Tuple
+	from os import PathLike
+	from typing import Dict, Iterator, List, Optional, Tuple
 
 	from genutility.typing import Connection
 
 	FileID = Tuple[int, int]
 	FilesDict = Dict[FileID, Tuple[str, str, int, int]]
+	FilesTuple = Tuple[int, int, str, str, int, int]
 
 logger = logging.getLogger(__name__)
+
+def get_all_drives_windows():
+	return [drive for driveletter in ascii_uppercase if (drive := Path(driveletter + ":\\")).is_dir()]
+
+ALL_DRIVES = get_all_drives_windows()
+DEFAULT_DB_PATH = f"{platform.node()}-catalog.db"
 
 def print(*msg, end="\x1b[0K\n", **kwargs):
 	_print(*msg, end=end, **kwargs)
 
 def is_signed_int_64(num):
 	return -2**63 <= num <= 2**63-1
+
+def unsigned_to_signed_int_64(num):
+	return num - 2**63
+
+def signed_to_unsigned_int_64(num):
+	return num + 2**63
 
 def read_dir(path):
 	# type: (str, ) -> FilesDict
@@ -38,35 +55,101 @@ def read_dir(path):
 		for entry in scandir_rec(path, files=True, dirs=False, relative=True, errorfunc=scandir_error_log):
 
 			try:
-				stat = os.stat(entry.path)
+				stats = stat(entry.path)
 			except (PermissionError, FileNotFoundError) as e:
-				logging.warning("Ignoring '%s' because of: %s", entry.path, e)
+				logger.warning("Ignoring '%s' because of: %s", entry.path, e)
 				continue
 			except OSError as e:
-				logging.error("Ignoring '%s' because of: %s", entry.path, e)
+				logger.error("Ignoring '%s' because of: %s", entry.path, e)
 				continue
 
 			relpath = entry.relpath.replace("\\", "/")
-			if stat.st_dev != 0 and stat.st_ino != 0:
+			if stats.st_dev != 0 and stats.st_ino != 0:
 				# On windows st_dev and st_ino is unsigned 64 bit int, but sqlite only supports signed 64 bit ints.
 				# I don't know about linux
-				device = stat.st_dev - 2**63
-				inode = stat.st_ino - 2**63
-				assert is_signed_int_64(inode) and is_signed_int_64(device) and is_signed_int_64(stat.st_size) and is_signed_int_64(stat.st_mtime_ns), (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-				yield (device, inode), (root, relpath, stat.st_size, stat.st_mtime_ns)
+				device = unsigned_to_signed_int_64(stats.st_dev)
+				inode = unsigned_to_signed_int_64(stats.st_ino)
+				assert is_signed_int_64(inode) and is_signed_int_64(device) and is_signed_int_64(stats.st_size) and is_signed_int_64(stats.st_mtime_ns), (stats.st_dev, stats.st_ino, stats.st_size, stats.st_mtime_ns)
+				yield (device, inode), (root, relpath, stats.st_size, stats.st_mtime_ns)
 			else:
-				logger.warning("Ignoring '%s' because of invalid id (device ID=%s, file inode=%s)", entry.path, stat.st_dev, stat.st_ino)
+				logger.warning("Ignoring '%s' because of invalid id (device ID=%s, file inode=%s)", entry.path, stats.st_dev, stats.st_ino)
 
 	return dict(it())
 
-def read_database(conn, path):
-	# type: (Connection, str) -> FilesDict
+class FilesDB:
 
-	root = path.replace("\\", "/")
-	query = "SELECT device, inode, root, path, filesize, utcmtime FROM files WHERE deleted=0 AND root=?"
-	with CursorContext(conn) as cursor:
+	def __init__(self, path, case_insensitive=None):
+		# type: (str, Optional[bool]) -> None
+
+		self.conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
+		self.conn.isolation_level = None
+
+		if case_insensitive is None:
+			self.case_insensitive = platform.system() in ("Windows", "Darwin")
+		else:
+			self.case_insensitive = case_insensitive
+
+	def init(self):
+		# type: () -> None
+
+		create_table_query = """CREATE TABLE IF NOT EXISTS files (
+			id INTEGER PRIMARY KEY,
+			begin_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			end_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			device INTEGER NOT NULL,
+			inode INTEGER NOT NULL,
+			root TEXT NOT NULL,
+			path TEXT NOT NULL,
+			filesize INTEGER NOT NULL,
+			utcmtime INTEGER NOT NULL,
+			deleted INTEGER NOT NULL DEFAULT 0
+		);"""
+
+		idx_files = "CREATE INDEX IF NOT EXISTS idx_files_id ON files (device, inode);"
+		if self.case_insensitive:
+			idx_root = "CREATE INDEX IF NOT EXISTS idx_root ON files (root COLLATE NOCASE);"
+		else:
+			idx_root = "CREATE INDEX IF NOT EXISTS idx_root ON files (root);"
+		idx_deleted = "CREATE INDEX IF NOT EXISTS idx_deleted ON files (deleted);"
+
+		create_index_queries = [idx_files, idx_root, idx_deleted]
+
+		with CursorContext(self.conn) as cur:
+			cur.execute(create_table_query)
+			for query in create_index_queries:
+				cur.execute(query)
+
+	def get_connection(self):
+		# type: () -> Connection
+
+		return self.conn
+
+	def get(self, deleted=False):
+		# type: (bool, ) -> Iterator[FilesTuple]
+
+		query = "SELECT device, inode, root, path, filesize, utcmtime FROM files WHERE deleted=?"
+
+		with CursorContext(self.conn) as cursor:
+			yield from cursor.execute(query, (int(deleted), ))
+
+	def get_by_root(self, root, deleted=False):
+		# type: (PathLike, bool) -> Iterator[FilesTuple]
+
+		root = fspath(root).replace("\\", "/")
+		if self.case_insensitive:
+			query = "SELECT device, inode, root, path, filesize, utcmtime FROM files WHERE deleted=? AND root=? COLLATE NOCASE"
+		else:
+			query = "SELECT device, inode, root, path, filesize, utcmtime FROM files WHERE deleted=? AND root=?"
+
+		with CursorContext(self.conn) as cursor:
+			yield from cursor.execute(query, (int(deleted), root))
+
+	def read_database(self, path, deleted=False):
+		# type: (PathLike, bool) -> FilesDict
+
 		return {(device, inode): (root, path, filesize, utcmtime)
-			for device, inode, root, path, filesize, utcmtime in cursor.execute(query, (root, ))}
+			for device, inode, root, path, filesize, utcmtime in self.get_by_root(path, deleted)
+		}
 
 def updated_nodes(fs, db):
 	# type: (FilesDict, FilesDict) -> Tuple[List[FileID], List[FileID]]
@@ -88,7 +171,7 @@ def updated_nodes(fs, db):
 				logger.warning("Error: %s", e)
 				continue
 			except OSError:
-				logging.exception("Cannot check if file is in use")
+				logger.exception("Cannot check if file is in use")
 				continue
 
 			if not in_use:
@@ -154,48 +237,11 @@ def compare(conn, fs, db):
 		entries = batch_executer(cursor, new_nodes_query, modified_nodes)
 		print(f"Found {entries} modified files")
 
-def get_db_connection(path):
-	# type: (str, ) -> Connection
-
-	create_table_query = """CREATE TABLE IF NOT EXISTS files (
-		id INTEGER PRIMARY KEY,
-		begin_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		end_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		device INTEGER NOT NULL,
-		inode INTEGER NOT NULL,
-		root TEXT NOT NULL,
-		path TEXT NOT NULL,
-		filesize INTEGER NOT NULL,
-		utcmtime INTEGER NOT NULL,
-		deleted INTEGER NOT NULL DEFAULT 0
-	);"""
-
-	create_index_queries = [
-		"CREATE INDEX IF NOT EXISTS idx_files_id ON files (device, inode);",
-		"CREATE INDEX IF NOT EXISTS idx_root ON files (root);"
-	]
-
-	conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
-	conn.isolation_level = None
-
-	with CursorContext(conn) as cur:
-		cur.execute(create_table_query)
-		for query in create_index_queries:
-			cur.execute(query)
-
-	return conn
-
 if __name__ == "__main__":
-	import platform
 	from argparse import ArgumentParser
-	from pathlib import Path
-	from string import ascii_uppercase
 
 	import colorama
 	from genutility.args import is_dir
-
-	ALL_DRIVES = [drive for driveletter in ascii_uppercase if (drive := Path(driveletter + ":\\")).is_dir()]
-	DEFAULT_DB_PATH = f"{platform.node()}-catalog.db"
 
 	parser = ArgumentParser()
 	parser.add_argument("--drives", type=is_dir, default=ALL_DRIVES, nargs="+")
@@ -216,11 +262,13 @@ if __name__ == "__main__":
 
 	colorama.init()
 
-	conn = get_db_connection(args.db_path)
+	db = FilesDB(args.db_path)
+	db.init()
+	conn = db.get_connection()
 
 	for root in args.drives:
 		print(f"Cataloging {root}")
-		db = read_database(conn, os.fspath(root))
-		fs = read_dir(os.fspath(root))
-		print(f"Read {len(fs)} directory and {len(db)} database entries")
-		compare(conn, fs, db)
+		dbdict = db.read_database(root)
+		fsdict = read_dir(fspath(root))
+		print(f"Read {len(fsdict)} directory and {len(dbdict)} database entries")
+		compare(conn, fsdict, dbdict)
