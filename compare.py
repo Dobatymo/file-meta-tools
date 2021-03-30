@@ -1,198 +1,31 @@
 from __future__ import generator_stop
 
 import csv
-import os.path
-from datetime import datetime, timezone
+import re
 from functools import partial
-from gzip import GzipFile
-from io import TextIOWrapper, open
 from itertools import chain
-from typing import TYPE_CHECKING
-from xml.etree.ElementTree import iterparse
+from os import fspath
+from typing import TYPE_CHECKING, Callable, Dict, Iterable
 
-import requests
 from genutility.args import existing_path
-from genutility.datetime import datetime_from_utc_timestamp, datetime_from_utc_timestamp_ns
-from genutility.file import _check_arguments
-from genutility.filesystem import FileProperties, scandir_rec
+from genutility.filesystem import FileProperties
 from genutility.hash import crc32_hash_file
 from genutility.torrent import iter_torrent
 
+from filemetatools.listreaders import (iter_archive, iter_archiveorg_xml, iter_dir, iter_gamedat_xml, iter_rar,
+                                       iter_syncthing, iter_zip)
+from filemetatools.utils import iterable_to_dict_by_key
+
 if TYPE_CHECKING:
 	from pathlib import Path
-	from typing import Callable, Dict, Iterable, Iterator, Optional
+
+	from filemetatools.utils import HashableLessThan
 
 """ current limitations: All paths on one side, need to be of the same type.
 	Auto type detection will only use the first entry for type determination.
 
 """
 
-class OpenFileOrUrl:
-
-	def __init__(self, path, mode="rt", encoding="utf-8"):
-		self.encoding = encoding
-
-		encoding = _check_arguments(mode, encoding)
-
-		if path.startswith(("http://", "https://")):
-
-			if "w" in mode:
-				raise ValueError("Cannot write mode for URLs")
-
-			r = requests.get(path, stream=True)
-			r.raise_for_status()
-			if r.headers["content-encoding"] == "gzip":
-				fileobj = GzipFile(fileobj=r.raw)
-			else:
-				fileobj = r.raw
-
-			if "t" in mode:
-				self.f = TextIOWrapper(fileobj, encoding=self.encoding)
-			else:
-				self.f = fileobj
-		else:
-			self.f = open(path, mode, encoding=self.encoding)
-
-	def __enter__(self):
-		return self.f
-
-	def __exit__(self, *args):
-		self.close()
-
-	def close(self):
-		self.f.close()
-
-def iter_archiveorg_xml(path, hashfunc="sha1", dirs=None):
-	# type: (str, str, Optional[bool]) -> Iterator[FileProperties]
-
-	assert hashfunc in ("sha1", "md5", "crc32")
-
-	skip_formats = {"Metadata", "Archive BitTorrent", "Item Tile"}
-
-	with OpenFileOrUrl(path) as fr:
-		for event, element in iterparse(fr, ["end"]):
-			if element.tag != "file":
-				continue
-			if element.get("source") != "original":
-				continue
-			if element.find("format").text in skip_formats:
-				continue
-
-			relpath = element.get("name")
-			size = int(element.find("size").text)
-			modtime = datetime_from_utc_timestamp(int(element.find("mtime").text))
-			hash = element.find(hashfunc).text
-
-			yield FileProperties(relpath, size, False, modtime=modtime, hash=hash)
-
-def iter_gamedat_xml(path, hashfunc="sha1", dirs=None):
-	# type: (str, str, Optional[bool]) -> Iterator[FileProperties]
-
-	assert hashfunc in ("sha1", "md5", "crc32")
-
-	hashfunc = {
-		"crc32": "crc",
-	}.get(hashfunc, hashfunc)
-
-	with open(path, "rt") as fr:
-		for event, element in iterparse(fr, ["end"]):
-			if element.tag != "game":
-				continue
-
-			rom = element.find("rom")
-			relpath = rom.get("name")
-			size = rom.get("size")
-			hash = rom.get(hashfunc)
-			yield FileProperties(relpath, size, False, hash=hash)
-
-def iter_zip(archivefile, topleveldir=None, hashfunc="crc32", assume_utc=False, dirs=None):
-	# type: (str, Optional[str], str, bool, Optional[bool]) -> Iterator[FileProperties]
-
-	""" If `topleveldir` is given, returned file paths will be relativ to this directory within the archive.
-
-		If `assume_utc` is False (the default), it is assumed that local time is stored
-		in the zip file. Otherwise it's assumed to be UTC.
-	"""
-
-	from zipfile import ZipFile
-
-	assert hashfunc in {"crc32"}
-
-	with ZipFile(archivefile, "r") as af:
-		for f in af.infolist():
-
-			if topleveldir:
-				relpath = os.path.relpath(f.filename, topleveldir)
-			else:
-				relpath = f.filename
-
-			year, month, day, hour, minute, second = f.date_time
-			if assume_utc:
-				# interpret as utc
-				modtime = datetime(year, month, day, hour, minute, second, tz=timezone.utc)
-			else:
-				# interpret as local time
-				modtime = datetime(year, month, day, hour, minute, second).astimezone(timezone.utc)
-
-			yield FileProperties(relpath, f.file_size, f.is_dir(), modtime=modtime, hash=f.CRC)
-
-def iter_rar(archivefile, topleveldir=None, hashfunc="crc32", dirs=None):
-	# type: (str, Optional[str], str, Optional[bool]) -> Iterator[FileProperties]
-
-	from rarfile import RarFile
-
-	assert hashfunc in {"crc32"}
-
-	with RarFile(archivefile, "r") as af:
-		for f in af.infolist():
-
-			if topleveldir:
-				relpath = os.path.relpath(f.filename, topleveldir)
-			else:
-				relpath = f.filename
-
-			yield FileProperties(relpath, f.file_size, f.is_dir(), modtime=f.mtime, hash=f.CRC)
-
-def iter_archive(archivefile, topleveldir=None, hashfunc="crc32"):
-	if archivefile.endswith(".zip"):
-		return iter_zip(archivefile, topleveldir, hashfunc)
-	elif archivefile.endswith(".rar"):
-		return iter_rar(archivefile, topleveldir, hashfunc)
-	else:
-		assert False, "Unsupported archive format"
-
-def iter_dir(path, extra=True, hashfunc=None, dirs=True):
-	# type: (str, bool, Optional[str], bool) -> Iterator[FileProperties]
-
-	""" Returns correct device id and file inode for py > 3.5 on windows if `extras=True` """
-
-	for entry in scandir_rec(path, files=True, dirs=dirs, relative=True):
-
-		if extra:
-			stat = os.stat(entry.path)
-		else:
-			stat = entry.stat()
-
-		modtime = datetime_from_utc_timestamp_ns(stat.st_mtime_ns)
-
-		yield FileProperties(entry.relpath.replace("\\", "/"), stat.st_size, entry.is_dir(), entry.path, (stat.st_dev, stat.st_ino), modtime)
-
-def iter_syncthing(path, extra=True, versions=".stversions", hashfunc=None):
-	""" skips syncthing versions folder """
-
-	for entry in scandir_rec(path, files=True, dirs=True, relative=True, allow_skip=True):
-		if entry.name == versions and entry.is_dir():
-			entry.follow = False
-			continue
-
-		if extra:
-			stat = os.stat(entry.path)
-		else:
-			stat = entry.stat()
-
-		modtime = datetime_from_utc_timestamp_ns(stat.st_mtime_ns)
-
-		yield FileProperties(entry.relpath, stat.st_size, entry.is_dir(), entry.path, (stat.st_dev, stat.st_ino), modtime)
 
 def files_to_csv(files, csvpath):
 	# type: (Iterable[FileProperties], str) -> None
@@ -204,6 +37,8 @@ def files_to_csv(files, csvpath):
 			csvwriter.writerow(props.values())
 
 def compare(a, b, left=True, right=True, both=True, ignore=None):
+	# type: (Dict[HashableLessThan, FileProperties], Dict[HashableLessThan, FileProperties], bool, bool, bool, re.Pattern) -> None
+
 	aset = a.keys()
 	bset = b.keys()
 
@@ -256,13 +91,6 @@ def compare(a, b, left=True, right=True, both=True, ignore=None):
 					else:
 						print("bo:", "no hash or abspath for same size files", key)
 
-def iterable_to_dict_by_key(by, it):
-	# type: (Iterable[FileProperties], ) -> Dict[str, tuple]
-
-	# todo: check if there are duplicated keys and warn about them
-
-	return {getattr(props, by): props for props in it}
-
 def find_type(path):
 	# type: (Path, ) -> Callable
 
@@ -283,7 +111,6 @@ def find_type(path):
 	raise RuntimeError("Type detection failed")
 
 if __name__ == "__main__":
-	import re
 	from argparse import ArgumentParser
 
 	types = {
@@ -345,7 +172,7 @@ if __name__ == "__main__":
 	print("Using input functions:", iter_func_a.__name__, iter_func_b.__name__)
 
 	#a = iterable_to_dict_by_key(iter_func_a(args.archive, args.topleveldir))
-	a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, args.left_paths)))
-	b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, args.right_paths)))
+	a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))))
+	b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))))
 
 	compare(a, b, ignore=re.compile(r"^.*\.pyc$"))

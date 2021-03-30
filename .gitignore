@@ -1,5 +1,7 @@
 *.bak
+*.bat
 *.log
+tmp/
 
 __pycache__/
 *.py[cod]

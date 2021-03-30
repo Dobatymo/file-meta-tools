@@ -1,6 +1,11 @@
+from __future__ import generator_stop
+
 from typing import TYPE_CHECKING
 
-from compare import compare, iter_dir, iter_syncthing, iterable_to_dict_by_key
+from filemetatools.listreaders import iter_dir, iter_syncthing
+from filemetatools.utils import iterable_to_dict_by_key
+
+from ..compare import compare
 
 if TYPE_CHECKING:
 	from genutility.filesystem import FileProperties

@@ -4,8 +4,8 @@ from unittest import TestCase
 from genutility.filesystem import FileProperties
 from rarfile import nsdatetime
 
-from catalog import read_dir
-from compare import iter_rar, iter_zip
+from filemetatools.fsreaders import read_dir
+from filemetatools.listreaders import iter_rar, iter_zip
 
 
 class FileTests(TestCase):

@@ -1,3 +1,5 @@
+from __future__ import generator_stop
+
 import csv
 from operator import itemgetter
 from pathlib import Path
@@ -7,12 +9,13 @@ from genutility.datetime import datetime_from_utc_timestamp_ns
 from genutility.exceptions import assert_choices
 from genutility.file import StdoutFile
 
-from catalog import DEFAULT_DB_PATH, FilesDB, signed_to_unsigned_int_64
+from filemetatools.fsreaders import FilesDB
+from filemetatools.utils import DEFAULT_DB_PATH, signed_to_unsigned_int_64
 
 if TYPE_CHECKING:
 	from genutility.filesystem import PathType
 
-	from catalog import FilesTuple
+	from filemetatools.fsreaders import FilesTuple
 
 fields = {
 	"device": 0,

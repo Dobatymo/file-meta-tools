@@ -1,12 +1,10 @@
 from __future__ import generator_stop
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Tuple
 
-from ..compare import iter_archiveorg_xml, iter_gamedat_xml
+from filemetatools.listreaders import iter_archiveorg_xml, iter_gamedat_xml
 
 if TYPE_CHECKING:
-	from typing import Iterable
-
 	from genutility.filesystem import FileProperties
 
 def strs_in_str(strings, s):
@@ -16,7 +14,7 @@ def strs_in_str(strings, s):
 	return False
 
 def split_gamedat(it):
-	# type: (Iterable[FileProperties], ) -> None
+	# type: (Iterable[FileProperties], ) -> Tuple[dict, dict, dict]
 
 	asia_strs = ["(Japan)", "(Korea)"]
 	usa_strs = ["(USA)"]
@@ -33,6 +31,8 @@ def split_gamedat(it):
 			europe[props.hash] = props.relpath
 		else:
 			print(props.relpath)
+
+	return asia, usa, europe
 
 archive_asia = "../data/AsiaGamecubeCollectionByGhostware_files.xml"
 archive_usa = "../data/GamecubeCollectionByGhostware_files.xml"
