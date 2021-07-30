@@ -9,13 +9,13 @@ from genutility.datetime import datetime_from_utc_timestamp_ns
 from genutility.exceptions import assert_choices
 from genutility.file import StdoutFile
 
-from filemetatools.fsreaders import FilesDB
-from filemetatools.utils import DEFAULT_DB_PATH, signed_to_unsigned_int_64
+from filemeta.fsreaders import FilesDB
+from filemeta.utils import DEFAULT_DB_PATH, signed_to_unsigned_int_64
 
 if TYPE_CHECKING:
 	from genutility.filesystem import PathType
 
-	from filemetatools.fsreaders import FilesTuple
+	from filemeta.fsreaders import FilesTuple
 
 fields = {
 	"device": 0,

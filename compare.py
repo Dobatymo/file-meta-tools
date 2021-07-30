@@ -12,9 +12,9 @@ from genutility.filesystem import FileProperties
 from genutility.hash import crc32_hash_file
 from genutility.torrent import iter_torrent
 
-from filemetatools.listreaders import (iter_archive, iter_archiveorg_xml, iter_dir, iter_gamedat_xml, iter_rar,
+from filemeta.listreaders import (iter_archive, iter_archiveorg_xml, iter_dir, iter_gamedat_xml, iter_rar,
                                        iter_syncthing, iter_zip)
-from filemetatools.utils import iterable_to_dict_by_key
+from filemeta.utils import iterable_to_dict_by_key
 
 if TYPE_CHECKING:
 	from pathlib import Path

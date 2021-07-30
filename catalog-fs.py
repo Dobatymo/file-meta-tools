@@ -9,15 +9,15 @@ from genutility.sql import CursorContext
 from genutility.sqlite import batch_executer
 from genutility.win.file import is_open_for_write
 
-from filemetatools.fsreaders import FilesDB, read_dir
-from filemetatools.utils import DEFAULT_DB_PATH, get_all_drives_windows
+from filemeta.fsreaders import FilesDB, read_dir
+from filemeta.utils import DEFAULT_DB_PATH, get_all_drives_windows
 
 if TYPE_CHECKING:
 	from genutility.typing import Connection
 
 	from filemetatools.fsreaders import FileID, FilesDict
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(None)
 
 def updated_nodes(fs, db):
 	# type: (FilesDict, FilesDict) -> Tuple[List[FileID], List[FileID]]
