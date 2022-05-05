@@ -4,7 +4,7 @@ from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable, Iterator, Optional
 
 from filemeta.listreaders import (
     iter_archive,
@@ -20,12 +20,24 @@ from genutility.args import existing_path
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties
 from genutility.hash import crc32_hash_file, md5_hash_file, sha1_hash_file
-from genutility.torrent import iter_torrent
+from genutility.torrent import iter_fastresume, iter_torrent
 
 """ current limitations: All paths on one side, need to be of the same type.
 	Auto type detection will only use the first entry for type determination.
 
 """
+
+
+def iter_torrents(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
+    for file in Path(path).rglob("*.torrent"):
+        yield from iter_torrent(fspath(file))
+
+
+def iter_fastresumes(
+    path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None
+) -> Iterator[FileProperties]:
+    for file in Path(path).rglob("*.fastresume"):
+        yield from iter_fastresume(fspath(file))
 
 
 class HashDB(FileDbSimple):
@@ -88,7 +100,7 @@ def files_to_csv(files: Iterable[FileProperties], csvpath: str) -> None:
 def compare(
     a: Dict[HashableLessThan, FileProperties],
     b: Dict[HashableLessThan, FileProperties],
-    hasher: Hasher,
+    hasher: Optional[Hasher],
     left: bool = True,
     right: bool = True,
     both: bool = True,
@@ -133,7 +145,7 @@ def compare(
                     print("bo:", "size different", key, aprops.size, bprops.size)
                 elif aprops.size == 0 and bprops.size == 0:
                     pass
-                else:  # same size
+                elif hasher is not None:  # same size
                     if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
                         if not aprops.hash:
                             aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
@@ -165,6 +177,14 @@ def find_type(path: Path) -> Callable:
     raise RuntimeError("Type detection failed")
 
 
+def funcname(f: Callable) -> str:
+
+    if isinstance(f, partial):
+        return f.func.__name__
+    else:
+        return f.__name__
+
+
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
@@ -173,6 +193,8 @@ if __name__ == "__main__":
     types = {
         "archive": iter_archive,
         "torrent": iter_torrent,
+        "torrents": iter_torrents,
+        "qb-fastresume": iter_fastresumes,
         "dir": iter_dir,
         "archiveorg_xml": iter_archiveorg_xml,
         "gamedat_xml": iter_gamedat_xml,
@@ -210,9 +232,12 @@ if __name__ == "__main__":
         default="auto",
         help="Type of right content",
     )
-    parser.add_argument("--by", choices={"relpath", "hash"}, default="relpath")
+    parser.add_argument("--by", choices={"relpath", "hash", "abspath"}, default="relpath")
     parser.add_argument("--hashfunc", choices=("sha1", "md5", "crc32"), default=None)
     parser.add_argument("--no-dirs", action="store_true")
+    parser.add_argument("--no-print-left", action="store_true")
+    parser.add_argument("--no-print-right", action="store_true")
+    parser.add_argument("--no-print-both", action="store_true")
     parser.add_argument(
         "--hashcache",
         type=Path,
@@ -232,30 +257,35 @@ if __name__ == "__main__":
         raise ValueError("Number of right relative paths doesn't match number of paths")
 
     if args.left_type == "auto":
-        iter_func_a = find_type(args.left_paths[0])
+        iter_func_a = partial(find_type(args.left_paths[0]), dirs=not args.no_dirs)
     else:
         if args.hashfunc:
             iter_func_a = partial(types[args.left_type], hashfunc=args.hashfunc, dirs=not args.no_dirs)
         else:
             iter_func_a = partial(types[args.left_type], dirs=not args.no_dirs)
 
-        iter_func_a.__name__ = types[args.left_type].__name__  # type: ignore [attr-defined]
-
     if args.right_type == "auto":
-        iter_func_b = find_type(args.right_paths[0])
+        iter_func_b = partial(find_type(args.right_paths[0]), dirs=not args.no_dirs)
     else:
         if args.hashfunc:
             iter_func_b = partial(types[args.right_type], hashfunc=args.hashfunc, dirs=not args.no_dirs)
         else:
             iter_func_b = partial(types[args.right_type], dirs=not args.no_dirs)
 
-        iter_func_b.__name__ = types[args.right_type].__name__  # type: ignore [attr-defined]
-
-    print("Using input functions:", iter_func_a.__name__, iter_func_b.__name__)
+    print("Using input functions:", funcname(iter_func_a), funcname(iter_func_b))
 
     # a = iterable_to_dict_by_key(iter_func_a(args.archive, args.topleveldir))
     a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))))
     b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))))
 
     hasher = Hasher(args.hashfunc, args.hashcache)
-    compare(a, b, hasher, ignore=re.compile(r"^.*\.pyc$"))
+
+    compare(
+        a,
+        b,
+        hasher,
+        not args.no_print_left,
+        not args.no_print_right,
+        not args.no_print_both,
+        ignore=re.compile(r"^.*\.pyc$"),
+    )

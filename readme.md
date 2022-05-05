@@ -15,3 +15,4 @@
 
 `py compare.py --left-paths "OverClocked ReMix v1" --right-paths "OverClocked ReMix v1 (0001-1000).torrent" "OverClocked ReMix v1 (1001-1900).torrent"`
 `py compare.py --left-paths "OverClocked ReMix v2" --right-paths "OverClocked ReMix v2 (0001-1000).torrent" "OverClocked ReMix v2 (1001-2000).torrent" "OverClocked ReMix v2 (2001-2500).torrent"`
+`py compare.py --left-type qb-fastresume --left-paths "C:\Users\<user>\AppData\Local\qBittorrent\BT_backup" --right-paths "C:\Downloads" --by abspath --no-print-left --no-print-both --no-dirs`
