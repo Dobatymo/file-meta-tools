@@ -4,7 +4,8 @@ from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, Optional
+from sys import stdout
+from typing import IO, Callable, Dict, Iterable, Iterator, Optional
 
 from filemeta.listreaders import (
     iter_archive,
@@ -17,6 +18,7 @@ from filemeta.listreaders import (
 )
 from filemeta.utils import HashableLessThan, iterable_to_dict_by_key
 from genutility.args import existing_path
+from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties
 from genutility.hash import crc32_hash_file, md5_hash_file, sha1_hash_file
@@ -105,6 +107,7 @@ def compare(
     right: bool = True,
     both: bool = True,
     ignore: re.Pattern = None,
+    file: IO[str] = stdout,
 ) -> None:
 
     aset = a.keys()
@@ -116,33 +119,33 @@ def compare(
     # note: the key is usually the `relpath` or the `hash`
 
     if left:
-        print("In left only")
+        print("In left only", file=file)
         for key in sorted(aset - bset):
-            if ignore and ignore.match(key):
+            if ignore and ignore.match(fspath(key)):
                 continue
-            print("lo:", key, a[key].relpath)
+            print("lo:", key, a[key].relpath, file=file)
 
     if right:
-        print("In right only")
+        print("In right only", file=file)
         for key in sorted(bset - aset):
-            if ignore and ignore.match(key):
+            if ignore and ignore.match(fspath(key)):
                 continue
-            print("ro:", key, b[key].relpath)
+            print("ro:", key, b[key].relpath, file=file)
 
     if both:
-        print("On both, but different")
+        print("On both, but different", file=file)
         for key in sorted(aset & bset):
-            if ignore and ignore.match(key):
+            if ignore and ignore.match(fspath(key)):
                 continue
 
             aprops = a[key]
             bprops = b[key]
 
             if aprops.isdir != bprops.isdir:
-                print("bo:", "one is dir, one is file", key)
+                print("bo:", "one is dir, one is file", key, file=file)
             if not aprops.isdir:
                 if aprops.size != bprops.size:
-                    print("bo:", "size different", key, aprops.size, bprops.size)
+                    print("bo:", "size different", key, aprops.size, bprops.size, file=file)
                 elif aprops.size == 0 and bprops.size == 0:
                     pass
                 elif hasher is not None:  # same size
@@ -152,10 +155,10 @@ def compare(
                         if not bprops.hash:
                             bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
                         if aprops.hash != bprops.hash:
-                            print("bo:", "hash different", key, aprops.hash, bprops.hash)
+                            print("bo:", "hash different", key, aprops.hash, bprops.hash, file=file)
                         # else: pass # same files
                     else:
-                        print("bo:", "no hash or abspath for same size files", key)
+                        print("bo:", "no hash or abspath for same size files", key, file=file)
 
 
 def find_type(path: Path) -> Callable:
@@ -232,12 +235,19 @@ if __name__ == "__main__":
         default="auto",
         help="Type of right content",
     )
-    parser.add_argument("--by", choices={"relpath", "hash", "abspath"}, default="relpath")
+    parser.add_argument(
+        "--by", choices={"relpath", "hash", "abspath"}, default="relpath", help="File property to use as the group key"
+    )
     parser.add_argument("--hashfunc", choices=("sha1", "md5", "crc32"), default=None)
-    parser.add_argument("--no-dirs", action="store_true")
+    parser.add_argument(
+        "--no-dirs",
+        action="store_true",
+        help="Ingnore missing directories. Use for input types which don't have explicit directories, like torrent files.",
+    )
     parser.add_argument("--no-print-left", action="store_true")
     parser.add_argument("--no-print-right", action="store_true")
     parser.add_argument("--no-print-both", action="store_true")
+    parser.add_argument("--out-path", type=Path, help="Output file, default is stdout")
     parser.add_argument(
         "--hashcache",
         type=Path,
@@ -275,17 +285,24 @@ if __name__ == "__main__":
     print("Using input functions:", funcname(iter_func_a), funcname(iter_func_b))
 
     # a = iterable_to_dict_by_key(iter_func_a(args.archive, args.topleveldir))
-    a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))))
-    b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))))
+
+    if args.by in ("relpath", "abspath"):
+        apply: Optional[Callable] = Path  # necessary for case-insensitive path compares under Windows
+    else:
+        apply = None
+    a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))), apply)
+    b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))), apply)
 
     hasher = Hasher(args.hashfunc, args.hashcache)
 
-    compare(
-        a,
-        b,
-        hasher,
-        not args.no_print_left,
-        not args.no_print_right,
-        not args.no_print_both,
-        ignore=re.compile(r"^.*\.pyc$"),
-    )
+    with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
+        compare(
+            a,
+            b,
+            hasher,
+            not args.no_print_left,
+            not args.no_print_right,
+            not args.no_print_both,
+            ignore=re.compile(r"^.*\.pyc$"),
+            file=fw,
+        )
