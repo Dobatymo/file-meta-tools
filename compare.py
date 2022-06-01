@@ -56,6 +56,10 @@ class HashDB(FileDbSimple):
 
 
 class Hasher:
+
+    hash: Optional[str]
+    hashfunc: Optional[Callable[[Path], str]]
+
     def __init__(self, hash: Optional[str] = None, cache: Optional[Path] = None) -> None:
         self.hash = hash
         if cache:
@@ -71,13 +75,12 @@ class Hasher:
             # self.hashfunc = lambda: int(crc32_hash_file(path), 16)
             self.hashfunc = crc32_hash_file
         else:
-
-            def hashfunc(path):
-                raise ValueError("Invalid hash function")
-
-            self.hashfunc = hashfunc
+            self.hashfunc = None
 
     def get(self, path: Path) -> str:
+        if self.hash is None or self.hashfunc is None:
+            raise ValueError("Hash function not specified")
+
         if self.db is not None:
             try:
                 (value,) = self.db.get(path, only={self.hash})
@@ -148,17 +151,18 @@ def compare(
                     print("bo:", "size different", key, aprops.size, bprops.size, file=file)
                 elif aprops.size == 0 and bprops.size == 0:
                     pass
-                elif hasher is not None:  # same size
-                    if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
-                        if not aprops.hash:
-                            aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
-                        if not bprops.hash:
-                            bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
-                        if aprops.hash != bprops.hash:
-                            print("bo:", "hash different", key, aprops.hash, bprops.hash, file=file)
-                        # else: pass # same files
-                    else:
-                        print("bo:", "no hash or abspath for same size files", key, file=file)
+                else:  # same size
+                    if (not aprops.hash or not bprops.hash) and hasher is not None:  # missing hashes should be computed
+                        if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
+                            if not aprops.hash:
+                                aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
+                            if not bprops.hash:
+                                bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
+                        else:
+                            print("bo:", "no hash or abspath for same size files", key, file=file)
+
+                    if aprops.hash and bprops.hash and aprops.hash != bprops.hash:
+                        print("bo:", "hash different", key, aprops.hash, bprops.hash, file=file)
 
 
 def find_type(path: Path) -> Callable:
@@ -189,7 +193,7 @@ def funcname(f: Callable) -> str:
 
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser
+    from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
     from appdirs import user_data_dir
 
@@ -212,21 +216,22 @@ if __name__ == "__main__":
     DEFAULT_HASHCACHE = Path(user_data_dir("file-meta-tools", "Dobatymo")) / "hashes.sqlite"
 
     parser = ArgumentParser(
-        description="Compare contents of two different file trees to each other. Various different sources, like local directories, archives and torrent files are supported."
+        formatter_class=ArgumentDefaultsHelpFormatter,
+        description="Compare contents of two different file trees (called left and right here) to each other. Various different sources, like local directories, archives and torrent files are supported.",
     )
-    parser.add_argument("--left-paths", nargs="+", type=path_or_url, required=True)
-    parser.add_argument("--right-paths", nargs="+", type=path_or_url, required=True)
+    parser.add_argument("--left-paths", nargs="+", type=path_or_url, required=True, help="Left group of input paths")
+    parser.add_argument("--right-paths", nargs="+", type=path_or_url, required=True, help="Right group of input paths")
     parser.add_argument(
         "--left-rel",
         nargs="+",
         default=None,
-        help="Top level directory of left path everything will be relative to",
+        help="Top level directory of left path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument(
         "--right-rel",
         nargs="+",
         default=None,
-        help="Top level directory of right path everything will be relative to",
+        help="Top level directory of right path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument("--left-type", choices=types.keys(), default="auto", help="Type of left content")
     parser.add_argument(
@@ -238,11 +243,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--by", choices={"relpath", "hash", "abspath"}, default="relpath", help="File property to use as the group key"
     )
-    parser.add_argument("--hashfunc", choices=("sha1", "md5", "crc32"), default=None)
+    parser.add_argument(
+        "--hashfunc",
+        choices=("sha1", "md5", "crc32"),
+        default=None,
+        help="Hash function used to compare file contents. If not provided, the content will not be compared. If provided, it's first tried to read the hash value from the file meta info, if not available it will be computed from the file contents. If the contents is not available also, a warning is printed.",
+    )
     parser.add_argument(
         "--no-dirs",
         action="store_true",
-        help="Ingnore missing directories. Use for input types which don't have explicit directories, like torrent files.",
+        help="Ignore missing directories. Use for input types which don't have explicit directories, like torrent files.",
     )
     parser.add_argument("--no-print-left", action="store_true")
     parser.add_argument("--no-print-right", action="store_true")
@@ -284,8 +294,6 @@ if __name__ == "__main__":
 
     print("Using input functions:", funcname(iter_func_a), funcname(iter_func_b))
 
-    # a = iterable_to_dict_by_key(iter_func_a(args.archive, args.topleveldir))
-
     if args.by in ("relpath", "abspath"):
         apply: Optional[Callable] = Path  # necessary for case-insensitive path compares under Windows
     else:
@@ -293,7 +301,10 @@ if __name__ == "__main__":
     a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))), apply)
     b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))), apply)
 
-    hasher = Hasher(args.hashfunc, args.hashcache)
+    if args.hashfunc:
+        hasher: Optional[Hasher] = Hasher(args.hashfunc, args.hashcache)
+    else:
+        hasher = None
 
     with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
         compare(
