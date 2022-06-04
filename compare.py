@@ -203,6 +203,7 @@ if __name__ == "__main__":
         "torrents": iter_torrents,
         "qb-fastresume": iter_fastresumes,
         "dir": iter_dir,
+        "dir-with-archives": partial(iter_dir, recurse_archives=True, hash_from_meta=False),
         "archiveorg_xml": iter_archiveorg_xml,
         "gamedat_xml": iter_gamedat_xml,
         "syncthing": iter_syncthing,
