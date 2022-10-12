@@ -113,7 +113,8 @@ if __name__ == "__main__":
     ALL_DRIVES = get_all_drives_windows()
 
     parser = ArgumentParser()
-    parser.add_argument("--drives", type=is_dir, default=ALL_DRIVES, nargs="+")
+    parser.add_argument("--drives-include", type=is_dir, default=ALL_DRIVES, nargs="+")
+    parser.add_argument("--drives-exclude", type=is_dir, default=[], nargs="+")
     parser.add_argument("--db-path", type=str, default=DEFAULT_DB_PATH)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -135,7 +136,10 @@ if __name__ == "__main__":
     db.init()
     conn = db.get_connection()
 
-    for root in args.drives:
+    drives_exclude = set(args.drives_exclude)
+    drives = [d for d in args.drives_include if d not in drives_exclude]
+
+    for root in drives:
         print(f"Cataloging {root}")
         dbdict = db.read_database(root)
         fsdict = read_dir(fspath(root))
