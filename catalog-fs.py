@@ -1,5 +1,6 @@
 import logging
 from os import fspath
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
 from filemeta.fsreaders import FilesDB, read_dir
@@ -114,7 +115,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--drives-include", type=is_dir, default=ALL_DRIVES, nargs="+")
-    parser.add_argument("--drives-exclude", type=is_dir, default=[], nargs="+")
+    parser.add_argument("--drives-exclude", type=Path, default=[], nargs="+")
     parser.add_argument("--db-path", type=str, default=DEFAULT_DB_PATH)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
