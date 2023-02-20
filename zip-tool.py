@@ -26,9 +26,7 @@ def find_zip_with_extra(path):
 
 
 def rewrite_zip_without_extra(basepath):
-
     with Progress(transient=True) as progress:
-
         task1 = progress.add_task("Processing...", total=None)
 
         for path in basepath.rglob("*.zip"):
@@ -90,7 +88,6 @@ class DummyCompress:
 
 
 class DummyDecompress:
-
     unconsumed_tail = b""
     eof = False
 
@@ -109,7 +106,6 @@ class DummyDecompress:
 
 
 class dummy_zlib:
-
     compressobj = DummyCompress
     decompressobj = DummyDecompress
     Z_DEFAULT_COMPRESSION = 0

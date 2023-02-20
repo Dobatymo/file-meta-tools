@@ -1,10 +1,12 @@
 import csv
+import logging
+import os.path
 import re
+import sys
 from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from sys import stdout
 from typing import IO, Callable, Dict, Iterable, Iterator, Optional
 
 from filemeta.listreaders import (
@@ -22,12 +24,17 @@ from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties
 from genutility.hash import crc32_hash_file, md5_hash_file, sha1_hash_file
-from genutility.torrent import iter_fastresume, iter_torrent
+from genutility.torrent import iter_fastresume
+from genutility.torrent import iter_torrent as _iter_torrent
 
 """ current limitations: All paths on one side, need to be of the same type.
 	Auto type detection will only use the first entry for type determination.
 
 """
+
+
+def iter_torrent(path: str, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
+    return _iter_torrent(path)
 
 
 def iter_torrents(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
@@ -56,7 +63,6 @@ class HashDB(FileDbSimple):
 
 
 class Hasher:
-
     hash: Optional[str]
     hashfunc: Optional[Callable[[Path], str]]
 
@@ -94,7 +100,6 @@ class Hasher:
 
 
 def files_to_csv(files: Iterable[FileProperties], csvpath: str) -> None:
-
     with open(csvpath, "w", newline="", encoding="utf-8") as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(FileProperties.keys())
@@ -110,9 +115,8 @@ def compare(
     right: bool = True,
     both: bool = True,
     ignore: re.Pattern = None,
-    file: IO[str] = stdout,
+    file: IO[str] = sys.stdout,
 ) -> None:
-
     aset = a.keys()
     bset = b.keys()
 
@@ -166,7 +170,6 @@ def compare(
 
 
 def find_type(path: Path) -> Callable:
-
     if path.is_dir():
         return iter_dir
     elif path.is_file():
@@ -185,11 +188,19 @@ def find_type(path: Path) -> Callable:
 
 
 def funcname(f: Callable) -> str:
-
     if isinstance(f, partial):
         return f.func.__name__
     else:
         return f.__name__
+
+
+def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[str, str], Iterator[FileProperties]]:
+    def inner(path: str, rel_to: str) -> Iterator[FileProperties]:
+        for prop in iter_func(path):
+            prop.relpath = os.path.relpath(prop.relpath, rel_to)
+            yield prop
+
+    return inner
 
 
 if __name__ == "__main__":
@@ -267,6 +278,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if (args.left_rel or args.right_rel) and args.by != "relpath":
+        parser.error("--left-rel or --right-rel can only be used with --by relpath")
+
     if args.left_rel is None:
         args.left_rel = ["."] * len(args.left_paths)
     elif len(args.left_rel) != len(args.left_paths):
@@ -299,13 +313,31 @@ if __name__ == "__main__":
         apply: Optional[Callable] = Path  # necessary for case-insensitive path compares under Windows
     else:
         apply = None
-    a = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_a, map(fspath, args.left_paths))), apply)
-    b = iterable_to_dict_by_key(args.by, chain.from_iterable(map(iter_func_b, map(fspath, args.right_paths))), apply)
+
+    if args.by == "relpath":
+        left_it = map(make_rel(iter_func_a), map(fspath, args.left_paths), args.left_rel)
+        right_it = map(make_rel(iter_func_b), map(fspath, args.right_paths), args.right_rel)
+    else:
+        left_it = map(iter_func_a, map(fspath, args.left_paths))
+        right_it = map(iter_func_b, map(fspath, args.right_paths))
+
+    try:
+        a = iterable_to_dict_by_key(args.by, chain.from_iterable(left_it), apply)
+    except AttributeError:
+        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_a), args.by)
+        sys.exit(1)
+
+    try:
+        b = iterable_to_dict_by_key(args.by, chain.from_iterable(right_it), apply)
+    except AttributeError:
+        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+        sys.exit(1)
 
     if args.hashfunc:
         hasher: Optional[Hasher] = Hasher(args.hashfunc, args.hashcache)
     else:
         hasher = None
+        logging.warning("No hash function is given, so matching paths will not be verified further")
 
     with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
         compare(

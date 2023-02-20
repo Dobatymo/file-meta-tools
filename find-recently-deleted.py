@@ -6,7 +6,6 @@ from compare import Hasher, compare
 
 
 def clean_syncthing_versioning(props: FileProperties) -> FileProperties:
-
     if not props.isdir:
         base, dateandext = props.relpath.rsplit("~", 1)
         try:

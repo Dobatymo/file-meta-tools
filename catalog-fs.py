@@ -1,25 +1,20 @@
 import logging
 from os import fspath
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple
+from typing import List, Tuple
 
-from filemeta.fsreaders import FilesDB, read_dir
+from filemeta.fsreaders import FileID, FilesDB, FilesDict, read_dir
 from filemeta.utils import DEFAULT_DB_PATH, get_all_drives_windows
 from genutility.logging import IsoDatetimeFormatter
 from genutility.sql import CursorContext
 from genutility.sqlite import batch_executer
+from genutility.typing import Connection
 from genutility.win.file import is_open_for_write
-
-if TYPE_CHECKING:
-    from filemetatools.fsreaders import FileID, FilesDict
-    from genutility.typing import Connection
 
 logger = logging.getLogger(None)
 
 
-def updated_nodes(fs, db):
-    # type: (FilesDict, FilesDict) -> Tuple[List[FileID], List[FileID]]
-
+def updated_nodes(fs: FilesDict, db: FilesDict) -> Tuple[List[FileID], List[FileID]]:
     equal = []
     updated = []
     for id in fs.keys() & db.keys():
@@ -48,9 +43,7 @@ def updated_nodes(fs, db):
     return equal, updated
 
 
-def compare(conn, fs, db):
-    # type: (Connection, FilesDict, FilesDict) -> None
-
+def compare(conn: Connection, fs: FilesDict, db: FilesDict) -> None:
     """Algorithm:
 
     Assumes a file ID which is unique at any moment in time, but can change or be reused at other times.
@@ -77,7 +70,6 @@ def compare(conn, fs, db):
         return device, inode, root, path, filesize, utcmtime
 
     with CursorContext(conn) as cursor:
-
         # insert nodes not in database yet
         new_nodes = map(fsdata_for_node, fs_nodes - db_nodes)
         new_nodes_query = "INSERT INTO files (device, inode, root, path, filesize, utcmtime) VALUES (?, ?, ?, ?, ?, ?)"

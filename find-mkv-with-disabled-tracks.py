@@ -21,7 +21,6 @@ def scandir_error_log_warning(entry: os.DirEntry, exception) -> None:
 
 
 def main(basepath: Path, recursive: bool = True) -> None:
-
     logging.getLogger("enzyme.parsers.ebml.core").setLevel(logging.CRITICAL)
 
     for path in scandir_ext(

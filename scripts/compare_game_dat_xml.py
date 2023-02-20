@@ -1,21 +1,17 @@
-from typing import TYPE_CHECKING, Iterable, Tuple
+from typing import Iterable, Tuple
 
 from filemeta.listreaders import iter_archiveorg_xml, iter_gamedat_xml
-
-if TYPE_CHECKING:
-    from genutility.filesystem import FileProperties
+from genutility.filesystem import FileProperties
 
 
-def strs_in_str(strings, s):
+def strs_in_str(strings: Iterable[str], s: str) -> bool:
     for string in strings:
         if string in s:
             return True
     return False
 
 
-def split_gamedat(it):
-    # type: (Iterable[FileProperties], ) -> Tuple[dict, dict, dict]
-
+def split_gamedat(it: Iterable[FileProperties]) -> Tuple[dict, dict, dict]:
     asia_strs = ["(Japan)", "(Korea)"]
     usa_strs = ["(USA)"]
     europe_strs = [
@@ -47,7 +43,6 @@ def split_gamedat(it):
 
 
 if __name__ == "__main__":
-
     archive_asia = "../data/AsiaGamecubeCollectionByGhostware_files.xml"
     archive_usa = "../data/GamecubeCollectionByGhostware_files.xml"
     archive_europe = "../data/EuropeanGamecubeCollectionByGhostware_files.xml"
@@ -59,7 +54,6 @@ if __name__ == "__main__":
     asia, usa, europe = split_gamedat(iter_gamedat_xml(game_dat))
 
     def do(country_str, archive_set, dat_dict):
-
         print()
         print("---" + country_str + "---")
         print()

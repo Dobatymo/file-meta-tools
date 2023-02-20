@@ -23,9 +23,9 @@ fields = {
 }
 
 
-def dict_to_csv(files, path=None, sortby=None):
-    # type: (Iterable[FilesTuple], Optional[PathType], Optional[List[str]]) -> None
-
+def dict_to_csv(
+    files: Iterable[FilesTuple], path: Optional[PathType] = None, sortby: Optional[List[str]] = None
+) -> None:
     assert_choices("sortby", sortby, fields.keys(), optional=True)
 
     with StdoutFile(path, "wt", encoding="utf-8", newline="") as csvfile:
@@ -71,7 +71,6 @@ if __name__ == "__main__":
     db = FilesDB(args.db_path)
 
     if args.action == "export-current":
-
         if args.drive:
             it = db.get_by_root(args.drive, args.deleted)
         else:
