@@ -18,7 +18,7 @@ from filemeta.listreaders import (
     iter_syncthing,
     iter_zip,
 )
-from filemeta.utils import HashableLessThan, iterable_to_dict_by_key
+from filemeta.utils import HashableLessThan, SmartPath, iterable_to_dict_by_key
 from genutility.args import existing_path
 from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
@@ -34,7 +34,7 @@ from genutility.torrent import iter_torrent as _iter_torrent
 
 
 def iter_torrent(path: str, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
-    return _iter_torrent(path)
+    return _iter_torrent(SmartPath(path))
 
 
 def iter_torrents(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
@@ -114,7 +114,7 @@ def compare(
     left: bool = True,
     right: bool = True,
     both: bool = True,
-    ignore: re.Pattern = None,
+    ignore: Optional[re.Pattern] = None,
     file: IO[str] = sys.stdout,
 ) -> None:
     aset = a.keys()
