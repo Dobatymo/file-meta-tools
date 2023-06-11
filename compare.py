@@ -46,7 +46,7 @@ def iter_fastresumes(
     path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None
 ) -> Iterator[FileProperties]:
     for file in Path(path).rglob("*.fastresume"):
-        yield from iter_fastresume(fspath(file))
+        yield from iter_fastresume(file)
 
 
 class HashDB(FileDbSimple):
@@ -203,10 +203,17 @@ def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[
     return inner
 
 
+def with_hash(it: Iterable[FileProperties], hasher: Optional[Hasher] = None) -> Iterator[FileProperties]:
+    for prop in it:
+        if prop.hash is None and hasher is not None:
+            prop.hash = hasher.get(Path(prop.abspath))
+        yield prop
+
+
 if __name__ == "__main__":
     from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
-    from appdirs import user_data_dir
+    from platformdirs import user_data_dir
 
     types = {
         "archive": iter_archive,
@@ -321,23 +328,40 @@ if __name__ == "__main__":
         left_it = map(iter_func_a, map(fspath, args.left_paths))
         right_it = map(iter_func_b, map(fspath, args.right_paths))
 
-    try:
-        a = iterable_to_dict_by_key(args.by, chain.from_iterable(left_it), apply)
-    except AttributeError:
-        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_a), args.by)
-        sys.exit(1)
-
-    try:
-        b = iterable_to_dict_by_key(args.by, chain.from_iterable(right_it), apply)
-    except AttributeError:
-        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
-        sys.exit(1)
+    left_it = chain.from_iterable(left_it)
+    right_it = chain.from_iterable(right_it)
 
     if args.hashfunc:
         hasher: Optional[Hasher] = Hasher(args.hashfunc, args.hashcache)
     else:
         hasher = None
-        logging.warning("No hash function is given, so matching paths will not be verified further")
+        logging.warning(
+            "No hash function is given, so matching paths will not be verified further and grouping by hash is only supported when hash meta info is available."
+        )
+
+    if args.by == "hash":
+        try:
+            left_it = with_hash(left_it, hasher)
+        except AttributeError:
+            logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+            sys.exit(1)
+        try:
+            right_it = with_hash(right_it, hasher)
+        except AttributeError:
+            logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+            sys.exit(1)
+
+    try:
+        a = iterable_to_dict_by_key(args.by, left_it, apply)
+    except AttributeError:
+        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_a), args.by)
+        sys.exit(1)
+
+    try:
+        b = iterable_to_dict_by_key(args.by, right_it, apply)
+    except AttributeError:
+        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+        sys.exit(1)
 
     with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
         compare(

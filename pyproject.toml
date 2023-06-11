@@ -7,3 +7,12 @@ line_length = 120
 
 [tool.mypy]
 ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.bandit]
+skips = ["B101"]
