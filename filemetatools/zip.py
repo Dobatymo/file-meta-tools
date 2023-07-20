@@ -128,4 +128,4 @@ def copy_zip(path_in, path_out, extras: bool = True, comments: bool = True) -> N
                         f_out._zinfo.external_attr = _info.external_attr
                         f_out._zinfo.compress_size = _info.compress_size
     finally:
-        zipfile.zlib = _zlib
+        zipfile.zlib = _zlib  # type: ignore[attr-defined]

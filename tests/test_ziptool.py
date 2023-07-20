@@ -1,6 +1,7 @@
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Optional
 from unittest import TestCase
 
 from filemetatools import zip
@@ -8,7 +9,7 @@ from filemetatools import zip
 test_data = Path("test-data")
 
 
-def test_zip(path: str) -> None:
+def test_zip(path: str) -> Optional[str]:
     with zipfile.ZipFile(path, "r") as zf:
         return zf.testzip()
 

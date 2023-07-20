@@ -4,3 +4,4 @@ genutility[torrent]>=0.0.98
 platformdirs>=3.5.0
 rarfile>=4.0
 requests>=2.25.1
+xxhash>=3.0

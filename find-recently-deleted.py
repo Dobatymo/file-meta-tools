@@ -7,6 +7,7 @@ from compare import Hasher, compare
 
 def clean_syncthing_versioning(props: FileProperties) -> FileProperties:
     if not props.isdir:
+        assert props.relpath is not None
         base, dateandext = props.relpath.rsplit("~", 1)
         try:
             date, ext = dateandext.rsplit(".", 1)
@@ -33,4 +34,4 @@ if __name__ == "__main__":
     b = iterable_to_dict_by_key("relpath", right)
 
     hasher = Hasher()
-    compare(a, b, hasher, left=False, both=False)
+    compare(a, b, hasher, left=None, both=None)

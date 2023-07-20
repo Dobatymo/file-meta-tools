@@ -7,8 +7,9 @@ from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from typing import IO, Callable, Dict, Iterable, Iterator, Optional
+from typing import IO, Callable, Dict, Iterable, Iterator, Optional, TypeVar
 
+import xxhash
 from filemeta.listreaders import (
     iter_archive,
     iter_archiveorg_xml,
@@ -23,14 +24,17 @@ from genutility.args import existing_path
 from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties
-from genutility.hash import crc32_hash_file, md5_hash_file, sha1_hash_file
+from genutility.hash import crc32_hash_file, hash_file, md5_hash_file, sha1_hash_file
 from genutility.torrent import iter_fastresume
 from genutility.torrent import iter_torrent as _iter_torrent
+from rich.progress import Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 """ current limitations: All paths on one side, need to be of the same type.
 	Auto type detection will only use the first entry for type determination.
 
 """
+
+xxhash_hash_file = partial(hash_file, hashcls=xxhash.xxh3_128)
 
 
 def iter_torrent(path: str, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
@@ -107,15 +111,79 @@ def files_to_csv(files: Iterable[FileProperties], csvpath: str) -> None:
             csvwriter.writerow(props.values())
 
 
+class BaseAction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+class PrintActionLeft(BaseAction):
+    def __init__(self, file: IO[str] = sys.stdout):
+        self.file = file
+
+    def __enter__(self):
+        print("In left only", file=self.file)
+        return self
+
+    def do(self, key: HashableLessThan, value: FileProperties):
+        print("lo:", key, value.relpath, file=self.file)
+
+
+class PrintActionRight(BaseAction):
+    def __init__(self, file: IO[str] = sys.stdout):
+        self.file = file
+
+    def __enter__(self):
+        print("In right only", file=self.file)
+        return self
+
+    def do(self, key: HashableLessThan, value: FileProperties):
+        print("ro:", key, value.relpath, file=self.file)
+
+
+class PrintActionBoth(BaseAction):
+    def __init__(self, file: IO[str] = sys.stdout):
+        self.file = file
+
+    def __enter__(self):
+        print("On both, but different", file=self.file)
+        return self
+
+    def different_type(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        print("bo:", "one is dir, one is file", key, file=self.file)
+
+    def directory(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        pass
+
+    def different_size(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        print("bo:", "size different", key, left.size, right.size, file=self.file)
+
+    def empty(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        pass
+
+    def missing_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        print("bo:", "no hash or abspath for same size files", key, file=self.file)
+
+    def same_size_no_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        pass
+
+    def same_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        pass
+
+    def different_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+        print("bo:", "hash different", key, left.hash, right.hash, file=self.file)
+
+
 def compare(
     a: Dict[HashableLessThan, FileProperties],
     b: Dict[HashableLessThan, FileProperties],
     hasher: Optional[Hasher],
-    left: bool = True,
-    right: bool = True,
-    both: bool = True,
+    left: Optional[BaseAction] = PrintActionLeft(sys.stdout),
+    right: Optional[BaseAction] = PrintActionLeft(sys.stdout),
+    both: Optional[BaseAction] = PrintActionBoth(sys.stdout),
     ignore: Optional[re.Pattern] = None,
-    file: IO[str] = sys.stdout,
 ) -> None:
     aset = a.keys()
     bset = b.keys()
@@ -125,48 +193,62 @@ def compare(
 
     # note: the key is usually the `relpath` or the `hash`
 
-    if left:
-        print("In left only", file=file)
-        for key in sorted(aset - bset):
-            if ignore and ignore.match(fspath(key)):
-                continue
-            print("lo:", key, a[key].relpath, file=file)
+    if left is not None:
+        with left:
+            for key in sorted(aset - bset):
+                if ignore and ignore.match(fspath(key)):
+                    continue
+                left.do(key, a[key])
 
-    if right:
-        print("In right only", file=file)
-        for key in sorted(bset - aset):
-            if ignore and ignore.match(fspath(key)):
-                continue
-            print("ro:", key, b[key].relpath, file=file)
+    if right is not None:
+        with right:
+            for key in sorted(bset - aset):
+                if ignore and ignore.match(fspath(key)):
+                    continue
+                right.do(key, b[key])
 
-    if both:
-        print("On both, but different", file=file)
-        for key in sorted(aset & bset):
-            if ignore and ignore.match(fspath(key)):
-                continue
+    if both is not None:
+        with both:
+            for key in sorted(aset & bset):
+                if ignore and ignore.match(fspath(key)):
+                    continue
 
-            aprops = a[key]
-            bprops = b[key]
+                aprops = a[key]
+                bprops = b[key]
 
-            if aprops.isdir != bprops.isdir:
-                print("bo:", "one is dir, one is file", key, file=file)
-            if not aprops.isdir:
+                if aprops.isdir != bprops.isdir:
+                    both.different_type(key, aprops, bprops)
+                    continue
+
+                if aprops.isdir:
+                    both.directory(key, aprops, bprops)
+                    continue
+
                 if aprops.size != bprops.size:
-                    print("bo:", "size different", key, aprops.size, bprops.size, file=file)
-                elif aprops.size == 0 and bprops.size == 0:
-                    pass
-                else:  # same size
-                    if (not aprops.hash or not bprops.hash) and hasher is not None:  # missing hashes should be computed
-                        if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
-                            if not aprops.hash:
-                                aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
-                            if not bprops.hash:
-                                bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
-                        else:
-                            print("bo:", "no hash or abspath for same size files", key, file=file)
+                    both.different_size(key, aprops, bprops)
+                    continue
 
-                    if aprops.hash and bprops.hash and aprops.hash != bprops.hash:
-                        print("bo:", "hash different", key, aprops.hash, bprops.hash, file=file)
+                if aprops.size == 0 and bprops.size == 0:
+                    both.empty(key, aprops, bprops)
+                    continue
+
+                if (not aprops.hash or not bprops.hash) and hasher is not None:  # missing hashes should be computed
+                    if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
+                        if not aprops.hash:
+                            aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
+                        if not bprops.hash:
+                            bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
+                    else:
+                        both.missing_hash(key, aprops, bprops)
+
+                if not aprops.hash or not bprops.hash:
+                    both.same_size_no_hash(key, aprops, bprops)
+                    continue
+
+                if aprops.hash == bprops.hash:
+                    both.same_hash(key, aprops, bprops)
+                else:
+                    both.different_hash(key, aprops, bprops)
 
 
 def find_type(path: Path) -> Callable:
@@ -197,6 +279,7 @@ def funcname(f: Callable) -> str:
 def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[str, str], Iterator[FileProperties]]:
     def inner(path: str, rel_to: str) -> Iterator[FileProperties]:
         for prop in iter_func(path):
+            assert prop.relpath is not None
             prop.relpath = os.path.relpath(prop.relpath, rel_to)
             yield prop
 
@@ -205,9 +288,26 @@ def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[
 
 def with_hash(it: Iterable[FileProperties], hasher: Optional[Hasher] = None) -> Iterator[FileProperties]:
     for prop in it:
+        assert prop.abspath is not None
         if prop.hash is None and hasher is not None:
             prop.hash = hasher.get(Path(prop.abspath))
         yield prop
+
+
+ProgressType = TypeVar("ProgressType")
+
+
+def track_files(
+    sequence: Iterable[ProgressType],
+    description: str = "Working...",
+) -> Iterable[ProgressType]:
+    progress = Progress(
+        TextColumn("{task.completed} files collected from {task.description}"),
+        TaskProgressColumn(show_speed=True),
+        TimeElapsedColumn(),
+    )
+    with progress:
+        yield from progress.track(sequence, description=description)
 
 
 if __name__ == "__main__":
@@ -277,6 +377,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-print-right", action="store_true")
     parser.add_argument("--no-print-both", action="store_true")
     parser.add_argument("--out-path", type=Path, help="Output file, default is stdout")
+    parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument(
         "--hashcache",
         type=Path,
@@ -351,6 +452,10 @@ if __name__ == "__main__":
             logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
             sys.exit(1)
 
+    if args.verbose:
+        left_it = track_files(left_it, description="left")
+        right_it = track_files(right_it, description="right")
+
     try:
         a = iterable_to_dict_by_key(args.by, left_it, apply)
     except AttributeError:
@@ -364,13 +469,19 @@ if __name__ == "__main__":
         sys.exit(1)
 
     with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
-        compare(
-            a,
-            b,
-            hasher,
-            not args.no_print_left,
-            not args.no_print_right,
-            not args.no_print_both,
-            ignore=re.compile(r"^.*\.pyc$"),
-            file=fw,
-        )
+        if args.no_print_left:
+            left = None
+        else:
+            left = PrintActionLeft(fw)
+
+        if args.no_print_right:
+            right = None
+        else:
+            right = PrintActionRight(fw)
+
+        if args.no_print_both:
+            both = None
+        else:
+            both = PrintActionBoth(fw)
+
+        compare(a, b, hasher, left, right, both, ignore=re.compile(r"^.*\.pyc$"))
