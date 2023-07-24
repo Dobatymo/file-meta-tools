@@ -2,12 +2,14 @@ import csv
 import logging
 import os.path
 import re
+import shutil
 import sys
+from collections import defaultdict
 from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from typing import IO, Callable, Dict, Iterable, Iterator, Optional, TypeVar
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, TypeVar
 
 import xxhash
 from filemeta.listreaders import (
@@ -28,6 +30,7 @@ from genutility.hash import crc32_hash_file, hash_file, md5_hash_file, sha1_hash
 from genutility.torrent import iter_fastresume
 from genutility.torrent import iter_torrent as _iter_torrent
 from rich.progress import Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from send2trash import send2trash
 
 """ current limitations: All paths on one side, need to be of the same type.
 	Auto type detection will only use the first entry for type determination.
@@ -62,7 +65,7 @@ class HashDB(FileDbSimple):
             ("crc32", "CHAR(8)", "?"),
         ]
 
-    def __init__(self, path):
+    def __init__(self, path: str) -> None:
         FileDbSimple.__init__(self, path, "hashes")
 
 
@@ -73,7 +76,8 @@ class Hasher:
     def __init__(self, hash: Optional[str] = None, cache: Optional[Path] = None) -> None:
         self.hash = hash
         if cache:
-            self.db: Optional[HashDB] = HashDB(cache)
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            self.db: Optional[HashDB] = HashDB(fspath(cache))
         else:
             self.db = None
 
@@ -112,77 +116,105 @@ def files_to_csv(files: Iterable[FileProperties], csvpath: str) -> None:
 
 
 class BaseAction:
-    def __enter__(self):
-        return self
+    def __init__(self, types: List[str], **kwargs) -> None:
+        pass
 
-    def __exit__(self, *args):
+    def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
+        raise NotImplementedError
+
+    def do_both(self, type_: str, key: HashableLessThan, left: FileProperties, right: FileProperties) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
         pass
 
 
-class PrintActionLeft(BaseAction):
-    def __init__(self, file: IO[str] = sys.stdout):
-        self.file = file
-
-    def __enter__(self):
-        print("In left only", file=self.file)
-        return self
-
-    def do(self, key: HashableLessThan, value: FileProperties):
-        print("lo:", key, value.relpath, file=self.file)
-
-
-class PrintActionRight(BaseAction):
-    def __init__(self, file: IO[str] = sys.stdout):
-        self.file = file
-
-    def __enter__(self):
-        print("In right only", file=self.file)
-        return self
-
-    def do(self, key: HashableLessThan, value: FileProperties):
-        print("ro:", key, value.relpath, file=self.file)
-
-
-class PrintActionBoth(BaseAction):
-    def __init__(self, file: IO[str] = sys.stdout):
-        self.file = file
-
-    def __enter__(self):
-        print("On both, but different", file=self.file)
-        return self
-
-    def different_type(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        print("bo:", "one is dir, one is file", key, file=self.file)
-
-    def directory(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+class IgnoreAction(BaseAction):
+    def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
         pass
 
-    def different_size(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        print("bo:", "size different", key, left.size, right.size, file=self.file)
-
-    def empty(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
+    def do_both(self, type_: str, key: HashableLessThan, left: FileProperties, right: FileProperties) -> None:
         pass
 
-    def missing_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        print("bo:", "no hash or abspath for same size files", key, file=self.file)
 
-    def same_size_no_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        pass
+class PrintAction(BaseAction):
+    def __init__(self, types: List[str], **kwargs) -> None:
+        super().__init__(types)
+        self.stdfile = StdoutFile(kwargs["out_path"], "wt", encoding="utf-8")
+        self.file = self.stdfile.fp
 
-    def same_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        pass
+    def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
+        print(f"{type_}:", key, value.relpath, file=self.file)
 
-    def different_hash(self, key: HashableLessThan, left: FileProperties, right: FileProperties):
-        print("bo:", "hash different", key, left.hash, right.hash, file=self.file)
+    def do_both(self, type_: str, key: HashableLessThan, left: FileProperties, right: FileProperties) -> None:
+        if type_ == "same_file":
+            print("both:", "paths refer to the same file", key, left.abspath, right.abspath)
+        elif type_ == "different_type":
+            print(f"both: one is dir, one is file `{key}` isdir={left.isdir}, isdir={right.isdir}", file=self.file)
+        elif type_ == "directory":
+            print("both:", "entries are dictionaries", key, file=self.file)
+        elif type_ == "different_size":
+            print("both:", "size different", key, left.size, right.size, file=self.file)
+        elif type_ == "empty":
+            print("both:", "files are empty", key, file=self.file)
+        elif type_ == "missing_hash":
+            print("both:", "no hash or abspath for same size files", key, file=self.file)
+        elif type_ == "same_size_no_hash":
+            print("both:", "same size files with not hash comparison required", key, file=self.file)
+        elif type_ == "same_hash":
+            print("both:", "hashes are same", key, file=self.file)
+        elif type_ == "different_hash":
+            print("both:", "hashes are different", key, left.hash, right.hash, file=self.file)
+        else:
+            raise ValueError(type_)
+
+    def close(self):
+        self.stdfile.close()
+
+
+class CopyAction(BaseAction):
+    def __init__(self, types: List[str], **kwargs) -> None:
+        super().__init__(types)
+        self.dst = kwargs["copy_dst"]
+        assert isinstance(self.dst, Path)
+
+    def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
+        assert value.relpath is not None
+        assert value.abspath is not None
+
+        src = value.abspath
+        dst = self.dst / value.relpath
+        print(f"[{type_}] Copying {src} to {dst}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+class TrashAction(BaseAction):
+    def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
+        assert value.relpath is not None
+        assert value.abspath is not None
+        print(f"[{type_}] Trashing {value.abspath}")
+        send2trash(value.abspath)
+
+
+ACTIONS_BOTH = [
+    "different_type",
+    "directory",
+    "different_size",
+    "empty",
+    "missing_hash",
+    "same_size_no_hash",
+    "same_hash",
+    "different_hash",
+]
 
 
 def compare(
     a: Dict[HashableLessThan, FileProperties],
     b: Dict[HashableLessThan, FileProperties],
     hasher: Optional[Hasher],
-    left: Optional[BaseAction] = PrintActionLeft(sys.stdout),
-    right: Optional[BaseAction] = PrintActionLeft(sys.stdout),
-    both: Optional[BaseAction] = PrintActionBoth(sys.stdout),
+    actions: Mapping[str, Optional[BaseAction]],
+    by: Optional[str] = None,
     ignore: Optional[re.Pattern] = None,
 ) -> None:
     aset = a.keys()
@@ -193,62 +225,118 @@ def compare(
 
     # note: the key is usually the `relpath` or the `hash`
 
-    if left is not None:
-        with left:
-            for key in sorted(aset - bset):
-                if ignore and ignore.match(fspath(key)):
-                    continue
-                left.do(key, a[key])
+    action_left_only = actions["left_only"]
+    action_right_only = actions["right_only"]
 
-    if right is not None:
-        with right:
-            for key in sorted(bset - aset):
-                if ignore and ignore.match(fspath(key)):
-                    continue
-                right.do(key, b[key])
+    if action_left_only is not None:
+        for key in sorted(aset - bset):
+            if ignore and by in ("relpath", "abspath") and ignore.match(fspath(key)):
+                continue
+            action_left_only.do_single("left_only", key, a[key])
 
-    if both is not None:
-        with both:
-            for key in sorted(aset & bset):
-                if ignore and ignore.match(fspath(key)):
-                    continue
+    if action_right_only is not None:
+        for key in sorted(bset - aset):
+            if ignore and by in ("relpath", "abspath") and ignore.match(fspath(key)):
+                continue
+            action_right_only.do_single("right_only", key, b[key])
 
-                aprops = a[key]
-                bprops = b[key]
+    if any(actions.get(a, None) is not None for a in ACTIONS_BOTH):
+        default_action = IgnoreAction([])
 
-                if aprops.isdir != bprops.isdir:
-                    both.different_type(key, aprops, bprops)
-                    continue
+        action_same_file = actions.get("same_file", default_action)
 
-                if aprops.isdir:
-                    both.directory(key, aprops, bprops)
-                    continue
+        action_different_type = actions.get("different_type", default_action)
+        action_different_type_left = actions.get("different_type_left", default_action)
+        action_different_type_right = actions.get("different_type_right", default_action)
 
-                if aprops.size != bprops.size:
-                    both.different_size(key, aprops, bprops)
-                    continue
+        action_directory = actions.get("directory", default_action)
+        action_directory_left = actions.get("directory_left", default_action)
+        action_directory_right = actions.get("directory_right", default_action)
 
-                if aprops.size == 0 and bprops.size == 0:
-                    both.empty(key, aprops, bprops)
-                    continue
+        action_different_size = actions.get("different_size", default_action)
+        action_different_size_left = actions.get("different_size_left", default_action)
+        action_different_size_right = actions.get("different_size_right", default_action)
 
-                if (not aprops.hash or not bprops.hash) and hasher is not None:  # missing hashes should be computed
-                    if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
-                        if not aprops.hash:
-                            aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
-                        if not bprops.hash:
-                            bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
-                    else:
-                        both.missing_hash(key, aprops, bprops)
+        action_empty = actions.get("empty", default_action)
+        action_empty_left = actions.get("empty_left", default_action)
+        action_empty_right = actions.get("empty_right", default_action)
 
-                if not aprops.hash or not bprops.hash:
-                    both.same_size_no_hash(key, aprops, bprops)
-                    continue
+        action_missing_hash = actions.get("missing_hash", default_action)
+        action_missing_hash_left = actions.get("missing_hash_left", default_action)
+        action_missing_hash_right = actions.get("missing_hash_right", default_action)
 
-                if aprops.hash == bprops.hash:
-                    both.same_hash(key, aprops, bprops)
-                else:
-                    both.different_hash(key, aprops, bprops)
+        action_same_size_no_hash = actions.get("same_size_no_hash", default_action)
+        action_same_size_no_hash_left = actions.get("same_size_no_hash_left", default_action)
+        action_same_size_no_hash_right = actions.get("same_size_no_hash_right", default_action)
+
+        action_same_hash = actions.get("same_hash", default_action)
+        action_same_hash_left = actions.get("same_hash_left", default_action)
+        action_same_hash_right = actions.get("same_hash_right", default_action)
+
+        action_different_hash = actions.get("different_hash", default_action)
+        action_different_hash_left = actions.get("different_hash_left", default_action)
+        action_different_hash_right = actions.get("different_hash_right", default_action)
+
+        for key in sorted(aset & bset):
+            if ignore and by in ("relpath", "abspath") and ignore.match(fspath(key)):
+                continue
+
+            aprops = a[key]
+            bprops = b[key]
+
+            if aprops.abspath and bprops.abspath and os.path.samefile(aprops.abspath, bprops.abspath):
+                action_same_file.do_both("same_file", key, aprops, bprops)
+                continue
+
+            if aprops.isdir != bprops.isdir:
+                action_different_type.do_both("different_type", key, aprops, bprops)
+                action_different_type_left.do_single("different_type", key, aprops)
+                action_different_type_right.do_single("different_type", key, bprops)
+                continue
+
+            if aprops.isdir:
+                action_directory.do_both("directory", key, aprops, bprops)
+                action_directory_left.do_single("directory", key, aprops)
+                action_directory_right.do_single("directory", key, bprops)
+                continue
+
+            if aprops.size != bprops.size:
+                action_different_size.do_both("different_size", key, aprops, bprops)
+                action_different_size_left.do_single("different_size", key, aprops)
+                action_different_size_right.do_single("different_size", key, bprops)
+                continue
+
+            if aprops.size == 0 and bprops.size == 0:
+                action_empty.do_both("empty", key, aprops, bprops)
+                action_empty_left.do_single("empty", key, aprops)
+                action_empty_right.do_single("empty", key, bprops)
+                continue
+
+            if (not aprops.hash or not bprops.hash) and hasher is not None:  # missing hashes should be computed
+                if (aprops.hash or aprops.abspath) and (bprops.hash or bprops.abspath):
+                    if not aprops.hash:
+                        aprops.hash = hasher.get(Path(aprops.abspath))  # type: ignore [arg-type]
+                    if not bprops.hash:
+                        bprops.hash = hasher.get(Path(bprops.abspath))  # type: ignore [arg-type]
+                else:  # missing hashes cannot be computed
+                    action_missing_hash.do_both("missing_hash", key, aprops, bprops)
+                    action_missing_hash_left.do_single("missing_hash", key, aprops)
+                    action_missing_hash_right.do_single("missing_hash", key, bprops)
+
+            if not aprops.hash or not bprops.hash:
+                action_same_size_no_hash.do_both("same_size_no_hash", key, aprops, bprops)
+                action_same_size_no_hash_left.do_single("same_size_no_hash", key, aprops)
+                action_same_size_no_hash_right.do_single("same_size_no_hash", key, bprops)
+                continue
+
+            if aprops.hash == bprops.hash:
+                action_same_hash.do_both("same_hash", key, aprops, bprops)
+                action_same_hash_left.do_single("same_hash", key, aprops)
+                action_same_hash_right.do_single("same_hash", key, bprops)
+            else:
+                action_different_hash.do_both("different_hash", key, aprops, bprops)
+                action_different_hash_left.do_single("different_hash", key, aprops)
+                action_different_hash_right.do_single("different_hash", key, bprops)
 
 
 def find_type(path: Path) -> Callable:
@@ -310,6 +398,76 @@ def track_files(
         yield from progress.track(sequence, description=description)
 
 
+ACTIONS = {
+    "ignore": IgnoreAction,
+    "print": PrintAction,
+    "copy": CopyAction,
+    "trash": TrashAction,
+}
+
+
+def get_all_actions():
+    all_actions = ["left_only", "right_only", "same_file"] + ACTIONS_BOTH
+    for action in ACTIONS_BOTH:
+        all_actions.append(f"{action}_left")
+        all_actions.append(f"{action}_right")
+    return all_actions
+
+
+PRESETS = {
+    "print-different": {
+        "left_only": "print",
+        "right_only": "print",
+        "different_type": "print",
+        "different_size": "print",
+        "different_hash": "print",
+    }
+}
+
+
+def action_names_from_args(args) -> Dict[str, str]:
+    all_actions = get_all_actions()
+    action_names: Dict[str, str] = {}
+
+    if args.preset is None:
+        for a in all_actions:
+            action_names[a] = args.default_action
+    else:
+        preset = PRESETS[args.preset]
+        for a in all_actions:
+            action_names[a] = preset.get(a) or "ignore"
+
+    for a in all_actions:
+        action = getattr(args, f"{a}_action")
+        if action is not None:
+            action_names[a] = action
+
+    return action_names
+
+
+class GetActions:
+    def __init__(self, action_names: Dict[str, str], **kwargs) -> None:
+        action_types = defaultdict(list)
+        for k, v in action_names.items():
+            action_types[v].append(k)
+        self._action_objects: Dict[str, BaseAction] = {}
+        for k, v in action_types.items():
+            if k is None:
+                cls = IgnoreAction
+            else:
+                cls = ACTIONS[k]
+            self._action_objects[k] = cls(v, **kwargs)
+
+        self.actions = {k: self._action_objects[v] for k, v in action_names.items()}
+
+    def __enter__(self) -> Dict[str, BaseAction]:
+        return self.actions
+
+    def __exit__(self, *args):
+        for obj in self._action_objects.values():
+            obj.close()
+
+
 if __name__ == "__main__":
     from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
@@ -360,7 +518,10 @@ if __name__ == "__main__":
         help="Type of right content",
     )
     parser.add_argument(
-        "--by", choices={"relpath", "hash", "abspath"}, default="relpath", help="File property to use as the group key"
+        "--by",
+        choices={"relpath", "hash", "abspath", "size"},
+        default="relpath",
+        help="File property to use as the group key",
     )
     parser.add_argument(
         "--hashfunc",
@@ -373,10 +534,10 @@ if __name__ == "__main__":
         action="store_true",
         help="Ignore missing directories. Use for input types which don't have explicit directories, like torrent files.",
     )
-    parser.add_argument("--no-print-left", action="store_true")
-    parser.add_argument("--no-print-right", action="store_true")
-    parser.add_argument("--no-print-both", action="store_true")
-    parser.add_argument("--out-path", type=Path, help="Output file, default is stdout")
+    parser.add_argument("--default-action", default="print")
+    parser.add_argument("--preset", choices=PRESETS.keys())
+    parser.add_argument("--out-path", type=Path, help="Output file for print action, default is stdout")
+    parser.add_argument("--copy-dst", type=Path, help="Base dir for copy action")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument(
         "--hashcache",
@@ -384,6 +545,10 @@ if __name__ == "__main__":
         default=DEFAULT_HASHCACHE,
         help="Path to sqlite database file to load/store cached hashes",
     )
+    action_group = parser.add_argument_group(title="actions", description="Finegrained actions to take")
+    for action in get_all_actions():
+        action = action.replace("_", "-")
+        action_group.add_argument(f"--{action}-action", choices=ACTIONS.keys())
     args = parser.parse_args()
 
     if (args.left_rel or args.right_rel) and args.by != "relpath":
@@ -468,20 +633,6 @@ if __name__ == "__main__":
         logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
         sys.exit(1)
 
-    with StdoutFile(args.out_path, "wt", encoding="utf-8") as fw:
-        if args.no_print_left:
-            left = None
-        else:
-            left = PrintActionLeft(fw)
-
-        if args.no_print_right:
-            right = None
-        else:
-            right = PrintActionRight(fw)
-
-        if args.no_print_both:
-            both = None
-        else:
-            both = PrintActionBoth(fw)
-
-        compare(a, b, hasher, left, right, both, ignore=re.compile(r"^.*\.pyc$"))
+    action_names = action_names_from_args(args)
+    with GetActions(action_names, out_path=args.out_path, copy_dst=args.copy_dst) as actions:
+        compare(a, b, hasher, actions, by=args.by, ignore=re.compile(r"^.*\.pyc$"))

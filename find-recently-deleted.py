@@ -2,7 +2,7 @@ from filemeta.listreaders import iter_dir, iter_syncthing
 from filemeta.utils import iterable_to_dict_by_key
 from genutility.filesystem import FileProperties
 
-from compare import Hasher, compare
+from compare import Hasher, PrintAction, compare
 
 
 def clean_syncthing_versioning(props: FileProperties) -> FileProperties:
@@ -34,4 +34,4 @@ if __name__ == "__main__":
     b = iterable_to_dict_by_key("relpath", right)
 
     hasher = Hasher()
-    compare(a, b, hasher, left=None, both=None)
+    compare(a, b, hasher, actions={"right_only": PrintAction([], out_path=None)})

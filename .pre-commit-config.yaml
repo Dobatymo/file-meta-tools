@@ -47,9 +47,13 @@ repos:
         args: ["--install-types", "--non-interactive", "--show-error-codes"]
         additional_dependencies:
           - colorama==0.4.6
-          - genutility[torrent]==0.0.98
+          - filemeta==0.0.2
+          - genutility[torrent]==0.0.100
+          - platformdirs==3.9.1
           - rarfile==4.0
           - requests==2.28.2
+          - Send2Trash==1.8.2
+          - xxhash==3.2.0
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:

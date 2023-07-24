@@ -1,7 +1,8 @@
 colorama>=0.4.4
-filemeta
-genutility[torrent]>=0.0.98
+filemeta>=0.0.2
+genutility[torrent]>=0.0.100
 platformdirs>=3.5.0
 rarfile>=4.0
 requests>=2.25.1
+Send2Trash>=1.8.0
 xxhash>=3.0
