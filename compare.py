@@ -22,10 +22,10 @@ from filemeta.listreaders import (
     iter_zip,
 )
 from filemeta.utils import HashableLessThan, SmartPath, iterable_to_dict_by_key
-from genutility.args import existing_path
+from genutility.args import existing_path, is_rel_path
 from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
-from genutility.filesystem import FileProperties
+from genutility.filesystem import FileProperties, equal_files
 from genutility.hash import crc32_hash_file, hash_file, md5_hash_file, sha1_hash_file
 from genutility.torrent import iter_fastresume
 from genutility.torrent import iter_torrent as _iter_torrent
@@ -47,6 +47,33 @@ def iter_torrent(path: str, dirs: Optional[bool] = None) -> Iterator[FilePropert
 def iter_torrents(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
     for file in Path(path).rglob("*.torrent"):
         yield from iter_torrent(fspath(file))
+
+
+from genutility.datetime import datetime_from_utc_timestamp_ns
+
+
+def iter_file_list(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
+    with open(path, encoding="utf-8") as fr:
+        for line in fr:
+            path = Path(line.rstrip())
+            if path.is_absolute():
+                relpath = None
+                abspath = path
+            else:
+                relpath = path
+                abspath = None
+
+            stat = path.stat()
+            modtime = datetime_from_utc_timestamp_ns(stat.st_mtime_ns)
+
+            yield FileProperties(
+                relpath,
+                stat.st_size,
+                path.is_dir(),
+                abspath,
+                (stat.st_dev, stat.st_ino),
+                modtime,
+            )
 
 
 def iter_fastresumes(
@@ -144,7 +171,7 @@ class PrintAction(BaseAction):
         self.file = self.stdfile.fp
 
     def do_single(self, type_: str, key: HashableLessThan, value: FileProperties) -> None:
-        print(f"{type_}:", key, value.relpath, file=self.file)
+        print(f"{type_}:", key, value.relpath or value.abspath, file=self.file)
 
     def do_both(self, type_: str, key: HashableLessThan, left: FileProperties, right: FileProperties) -> None:
         if type_ == "same_file":
@@ -339,6 +366,37 @@ def compare(
                 action_different_hash_right.do_single("different_hash", key, bprops)
 
 
+def compare_content(
+    a: Dict[HashableLessThan, FileProperties],
+    b: Dict[HashableLessThan, FileProperties],
+    hasher: Optional[Hasher],
+    actions: Mapping[str, Optional[BaseAction]],
+    by: Optional[str] = None,
+    ignore: Optional[re.Pattern] = None,
+) -> None:
+    aset = a.keys()
+    bset = b.keys()
+
+    for key in sorted(aset & bset):
+        aprops = a[key]
+        bprops = b[key]
+
+        amount = min(aprops.size, bprops.size)
+        partially_equal = equal_files(aprops.abspath, bprops.abspath, amount=amount)
+
+        if partially_equal and aprops.size == bprops.size:
+            print("same size and same content", key, aprops.relpath or aprops.abspath, bprops.relpath or bprops.abspath)
+        elif partially_equal and aprops.size != bprops.size:
+            print(
+                "different size, but same content otherwise",
+                key,
+                aprops.relpath or aprops.abspath,
+                bprops.relpath or bprops.abspath,
+            )
+        else:
+            print("different content", key, aprops.relpath or aprops.abspath, bprops.relpath or bprops.abspath)
+
+
 def find_type(path: Path) -> Callable:
     if path.is_dir():
         return iter_dir
@@ -353,6 +411,8 @@ def find_type(path: Path) -> Callable:
             return iter_archiveorg_xml
         elif path.suffix == ".dat":
             return iter_gamedat_xml
+        elif path.suffix == ".txt":
+            return iter_file_list
 
     raise RuntimeError("Type detection failed")
 
@@ -380,6 +440,18 @@ def with_hash(it: Iterable[FileProperties], hasher: Optional[Hasher] = None) -> 
         if prop.hash is None and hasher is not None:
             prop.hash = hasher.get(Path(prop.abspath))
         yield prop
+
+
+class OrderedFileProperties:
+    def __init__(self, props: FileProperties) -> None:
+        self.__dict__.update(props.items())
+
+
+def with_order(it: Iterable[FileProperties]) -> Iterator[OrderedFileProperties]:
+    for i, prop in enumerate(it):
+        new = OrderedFileProperties(prop)
+        new.order = i
+        yield new
 
 
 ProgressType = TypeVar("ProgressType")
@@ -483,6 +555,7 @@ if __name__ == "__main__":
         "archiveorg_xml": iter_archiveorg_xml,
         "gamedat_xml": iter_gamedat_xml,
         "syncthing": iter_syncthing,
+        "file_list": iter_file_list,
     }
 
     def path_or_url(path):
@@ -502,12 +575,14 @@ if __name__ == "__main__":
         "--left-rel",
         nargs="+",
         default=None,
+        type=is_rel_path,
         help="Top level directory of left path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument(
         "--right-rel",
         nargs="+",
         default=None,
+        type=is_rel_path,
         help="Top level directory of right path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument("--left-type", choices=types.keys(), default="auto", help="Type of left content")
@@ -519,7 +594,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--by",
-        choices={"relpath", "hash", "abspath", "size"},
+        choices={"relpath", "hash", "abspath", "size", "order"},
         default="relpath",
         help="File property to use as the group key",
     )
@@ -535,6 +610,7 @@ if __name__ == "__main__":
         help="Ignore missing directories. Use for input types which don't have explicit directories, like torrent files.",
     )
     parser.add_argument("--default-action", default="print")
+    parser.add_argument("--compare", choices=("default", "partial-content"), default="default")
     parser.add_argument("--preset", choices=PRESETS.keys())
     parser.add_argument("--out-path", type=Path, help="Output file for print action, default is stdout")
     parser.add_argument("--copy-dst", type=Path, help="Base dir for copy action")
@@ -616,6 +692,9 @@ if __name__ == "__main__":
         except AttributeError:
             logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
             sys.exit(1)
+    elif args.by == "order":
+        left_it = with_order(left_it)
+        right_it = with_order(right_it)
 
     if args.verbose:
         left_it = track_files(left_it, description="left")
@@ -635,4 +714,7 @@ if __name__ == "__main__":
 
     action_names = action_names_from_args(args)
     with GetActions(action_names, out_path=args.out_path, copy_dst=args.copy_dst) as actions:
-        compare(a, b, hasher, actions, by=args.by, ignore=re.compile(r"^.*\.pyc$"))
+        if args.compare == "default":
+            compare(a, b, hasher, actions, by=args.by, ignore=re.compile(r"^.*\.pyc$"))
+        elif args.compare == "partial-content":
+            compare_content(a, b, hasher, actions, by=args.by, ignore=re.compile(r"^.*\.pyc$"))
