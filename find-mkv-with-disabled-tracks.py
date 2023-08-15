@@ -23,9 +23,11 @@ def scandir_error_log_warning(entry: os.DirEntry, exception) -> None:
 def main(basepath: Path, recursive: bool = True) -> None:
     logging.getLogger("enzyme.parsers.ebml.core").setLevel(logging.CRITICAL)
 
+    extensions_mkv = {".mkv", ".mka", ".mks", ".mk3d", ".webm"}
+
     for path in scandir_ext(
         basepath,
-        extensions={".mkv", ".mka", ".mks", ".mk3d", ".webm"},
+        extensions_mkv,
         rec=recursive,
         errorfunc=scandir_error_log_warning,
     ):

@@ -9,7 +9,7 @@ from functools import partial
 from itertools import chain
 from os import fspath
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, TypeVar
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional
 
 import xxhash
 from filemeta.listreaders import (
@@ -27,9 +27,11 @@ from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties, equal_files
 from genutility.hash import crc32_hash_file, hash_file, md5_hash_file, sha1_hash_file
+from genutility.rich import Progress
 from genutility.torrent import iter_fastresume
 from genutility.torrent import iter_torrent as _iter_torrent
-from rich.progress import Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.progress import Progress as RichProgress
+from rich.progress import ProgressType, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from send2trash import send2trash
 
 """ current limitations: All paths on one side, need to be of the same type.
@@ -55,21 +57,21 @@ from genutility.datetime import datetime_from_utc_timestamp_ns
 def iter_file_list(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
     with open(path, encoding="utf-8") as fr:
         for line in fr:
-            path = Path(line.rstrip())
-            if path.is_absolute():
+            p = Path(line.rstrip())
+            if p.is_absolute():
                 relpath = None
-                abspath = path
+                abspath = p
             else:
-                relpath = path
+                relpath = p
                 abspath = None
 
-            stat = path.stat()
+            stat = p.stat()
             modtime = datetime_from_utc_timestamp_ns(stat.st_mtime_ns)
 
             yield FileProperties(
                 relpath,
                 stat.st_size,
-                path.is_dir(),
+                p.is_dir(),
                 abspath,
                 (stat.st_dev, stat.st_ino),
                 modtime,
@@ -124,7 +126,7 @@ class Hasher:
 
         if self.db is not None:
             try:
-                (value,) = self.db.get(path, only={self.hash})
+                (value,) = self.db.get(path, only=(self.hash,))
             except NoResult:
                 value = self.hashfunc(path)
                 self.db.add(path, derived={self.hash: value})
@@ -443,31 +445,30 @@ def with_hash(it: Iterable[FileProperties], hasher: Optional[Hasher] = None) -> 
 
 
 class OrderedFileProperties:
-    def __init__(self, props: FileProperties) -> None:
+    order: int
+
+    def __init__(self, props: FileProperties, order: int) -> None:
         self.__dict__.update(props.items())
+        self.order = order
 
 
 def with_order(it: Iterable[FileProperties]) -> Iterator[OrderedFileProperties]:
     for i, prop in enumerate(it):
-        new = OrderedFileProperties(prop)
-        new.order = i
-        yield new
-
-
-ProgressType = TypeVar("ProgressType")
+        yield OrderedFileProperties(prop, i)
 
 
 def track_files(
     sequence: Iterable[ProgressType],
-    description: str = "Working...",
+    description: str,
 ) -> Iterable[ProgressType]:
-    progress = Progress(
+    progress = RichProgress(
         TextColumn("{task.completed} files collected from {task.description}"),
         TaskProgressColumn(show_speed=True),
         TimeElapsedColumn(),
     )
     with progress:
-        yield from progress.track(sequence, description=description)
+        p = Progress(progress)
+        yield from p.track(sequence, description=description)
 
 
 ACTIONS = {

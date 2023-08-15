@@ -41,14 +41,14 @@ repos:
     hooks:
       - id: flake8
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: 'v1.4.1'
+    rev: 'v1.5.0'
     hooks:
       - id: mypy
         args: ["--install-types", "--non-interactive", "--show-error-codes"]
         additional_dependencies:
           - colorama==0.4.6
           - filemeta==0.0.2
-          - genutility[torrent]==0.0.100
+          - genutility[torrent,rich]==0.0.102
           - platformdirs==3.9.1
           - rarfile==4.0
           - requests==2.28.2
