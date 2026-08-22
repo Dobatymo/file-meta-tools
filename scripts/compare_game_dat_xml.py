@@ -5,10 +5,7 @@ from genutility.filesystem import FileProperties
 
 
 def strs_in_str(strings: Iterable[str], s: str) -> bool:
-    for string in strings:
-        if string in s:
-            return True
-    return False
+    return any(string in s for string in strings)
 
 
 def split_gamedat(it: Iterable[FileProperties]) -> Tuple[dict, dict, dict]:

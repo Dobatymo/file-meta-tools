@@ -10,7 +10,7 @@ def clean_syncthing_versioning(props: FileProperties) -> FileProperties:
         assert props.relpath is not None
         base, dateandext = props.relpath.rsplit("~", 1)
         try:
-            date, ext = dateandext.rsplit(".", 1)
+            _date, ext = dateandext.rsplit(".", 1)
             props.relpath = base + "." + ext
         except ValueError:
             props.relpath = base

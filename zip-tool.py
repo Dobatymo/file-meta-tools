@@ -14,9 +14,9 @@ from filemetatools import zip as ziptool
 
 
 def find_zip_with_extra(path: Path) -> None:
-    for path in path.rglob("*.zip"):
-        has_extras = ziptool.zip_has_extra(path)
-        print(has_extras, path)
+    for zippath in path.rglob("*.zip"):
+        has_extras = ziptool.zip_has_extra(zippath)
+        print(has_extras, zippath)
 
 
 def rewrite_zip_without_extra(basepath: Path) -> None:
@@ -28,18 +28,17 @@ def rewrite_zip_without_extra(basepath: Path) -> None:
         p = Progress(progress)
         for path in p.track(basepath.rglob("*.zip"), description="Processed {task.completed} zip files"):
             relpath = path.relative_to(basepath)
-            with TransactionalCreateFile(path, "xb", handle_archives=False) as f_tmp:
-                with zipfile.ZipFile(path, "r") as a_in, zipfile.ZipFile(
-                    f_tmp, "x", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=9
-                ) as a_out:
-                    infolist = a_in.infolist()
-                    for info in p.track(infolist, description=str(relpath)):
-                        if info.is_dir():
-                            info.date_time = (1980, 1, 1, 0, 0, 0)
-                        info.extra = b""
-                        assert info.comment == b""
-                        with a_in.open(info, "r") as f_in, a_out.open(info, "w") as f_out:
-                            copyfilelike(f_in, f_out)
+            with TransactionalCreateFile(path, "xb", handle_archives=False) as f_tmp, zipfile.ZipFile(
+                path, "r"
+            ) as a_in, zipfile.ZipFile(f_tmp, "x", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=9) as a_out:
+                infolist = a_in.infolist()
+                for info in p.track(infolist, description=str(relpath)):
+                    if info.is_dir():
+                        info.date_time = (1980, 1, 1, 0, 0, 0)
+                    info.extra = b""
+                    assert info.comment == b""
+                    with a_in.open(info, "r") as f_in, a_out.open(info, "w") as f_out:
+                        copyfilelike(f_in, f_out)
 
 
 def compare_zip_meta(path_a, path_b) -> bool:

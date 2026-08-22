@@ -23,7 +23,7 @@ def updated_nodes(fs: FilesDict, db: FilesDict) -> Tuple[List[FileID], List[File
         if fs_info == db_info:
             equal.append(id)
         else:
-            root, path, filesize, utcmtime = fs_info
+            root, path, _filesize, _utcmtime = fs_info
             fullpath = root + path
 
             try:
@@ -88,7 +88,7 @@ def compare(conn: Connection, fs: FilesDict, db: FilesDict) -> None:
         entries = batch_executer(cursor, unmodified_nodes_query, unmodified)
         print(f"Found {entries} unmodified files")
 
-        # for files which where modified
+        # for files which were modified
         # - set them to deleted for current properties
         # - add them with new properties
         batch_executer(cursor, deleted_nodes_query, modified)
@@ -100,7 +100,6 @@ def compare(conn: Connection, fs: FilesDict, db: FilesDict) -> None:
 if __name__ == "__main__":
     from argparse import ArgumentParser
 
-    import colorama
     from genutility.args import is_dir
 
     ALL_DRIVES = get_all_drives_windows()
@@ -122,8 +121,6 @@ if __name__ == "__main__":
         logger.setLevel(logging.INFO)
     else:
         logger.setLevel(logging.WARNING)
-
-    colorama.init()
 
     db = FilesDB(args.db_path)
     db.init()

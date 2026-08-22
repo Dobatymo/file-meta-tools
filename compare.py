@@ -4,6 +4,7 @@ import os.path
 import re
 import shutil
 import sys
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, RawDescriptionHelpFormatter
 from collections import defaultdict
 from functools import partial
 from itertools import chain
@@ -23,6 +24,7 @@ from filemeta.listreaders import (
 )
 from filemeta.utils import HashableLessThan, SmartPath, iterable_to_dict_by_key
 from genutility.args import existing_path, is_rel_path
+from genutility.datetime import datetime_from_utc_timestamp_ns
 from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
 from genutility.filesystem import FileProperties, equal_files
@@ -39,6 +41,7 @@ from send2trash import send2trash
 
 """
 
+logger = logging.getLogger(__name__)
 xxhash_hash_file = partial(hash_file, hashcls=xxhash.xxh3_128)
 
 
@@ -49,9 +52,6 @@ def iter_torrent(path: str, dirs: Optional[bool] = None) -> Iterator[FilePropert
 def iter_torrents(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
     for file in Path(path).rglob("*.torrent"):
         yield from iter_torrent(fspath(file))
-
-
-from genutility.datetime import datetime_from_utc_timestamp_ns
 
 
 def iter_file_list(path: str, hashfunc: Optional[str] = None, dirs: Optional[bool] = None) -> Iterator[FileProperties]:
@@ -115,8 +115,7 @@ class Hasher:
         elif hash == "md5":
             self.hashfunc = lambda path: md5_hash_file(path).hexdigest()
         elif hash == "crc32":
-            # self.hashfunc = lambda: int(crc32_hash_file(path), 16)
-            self.hashfunc = crc32_hash_file
+            self.hashfunc = lambda path: crc32_hash_file(path).hexdigest()
         else:
             self.hashfunc = None
 
@@ -480,7 +479,7 @@ ACTIONS = {
 
 
 def get_all_actions():
-    all_actions = ["left_only", "right_only", "same_file"] + ACTIONS_BOTH
+    all_actions = ["left_only", "right_only", "same_file", *ACTIONS_BOTH]
     for action in ACTIONS_BOTH:
         all_actions.append(f"{action}_left")
         all_actions.append(f"{action}_right")
@@ -541,9 +540,11 @@ class GetActions:
             obj.close()
 
 
-if __name__ == "__main__":
-    from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
+class MyHelpFormatter(ArgumentDefaultsHelpFormatter, RawDescriptionHelpFormatter):
+    pass
 
+
+if __name__ == "__main__":
     from platformdirs import user_data_dir
 
     types = {
@@ -566,9 +567,18 @@ if __name__ == "__main__":
 
     DEFAULT_HASHCACHE = Path(user_data_dir("file-meta-tools", "Dobatymo")) / "hashes.sqlite"
 
+    EPILOG = """Examples:
+    Print all files which are the same (by path and size only) in both directories
+    %(prog)s --left-paths C:\\A --right-paths C:\\B --default ignore --same-file-action print --empty-action print
+
+    Compare archive.org item with local folder
+    %(prog)s --left-paths https://archive.org/download/identifier/identifier_files.xml --left-type archiveorg_xml --right-paths ./identifier --right-type dir --hashfunc crc32 --no-dirs
+    """
+
     parser = ArgumentParser(
-        formatter_class=ArgumentDefaultsHelpFormatter,
+        formatter_class=MyHelpFormatter,
         description="Compare contents of two different file trees (called left and right here) to each other. Various different sources, like local directories, archives and torrent files are supported.",
+        epilog=EPILOG,
     )
     parser.add_argument("--left-paths", nargs="+", type=path_or_url, required=True, help="Left group of input paths")
     parser.add_argument("--right-paths", nargs="+", type=path_or_url, required=True, help="Right group of input paths")
@@ -610,8 +620,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Ignore missing directories. Use for input types which don't have explicit directories, like torrent files.",
     )
-    parser.add_argument("--default-action", default="print")
-    parser.add_argument("--compare", choices=("default", "partial-content"), default="default")
+    parser.add_argument(
+        "--default-action",
+        choices=ACTIONS.keys(),
+        default="print",
+        help="Action no take when no specific one is specified",
+    )
+    parser.add_argument(
+        "--compare",
+        choices=("default", "partial-content"),
+        default="default",
+        help="Compare method to use. partial-content matches files if one file starts with the other. Ie. when the file size is different, they will only be compared using the bytes available to both files.",
+    )
     parser.add_argument("--preset", choices=PRESETS.keys())
     parser.add_argument("--out-path", type=Path, help="Output file for print action, default is stdout")
     parser.add_argument("--copy-dst", type=Path, help="Base dir for copy action")
@@ -678,7 +698,7 @@ if __name__ == "__main__":
         hasher: Optional[Hasher] = Hasher(args.hashfunc, args.hashcache)
     else:
         hasher = None
-        logging.warning(
+        logger.warning(
             "No hash function is given, so matching paths will not be verified further and grouping by hash is only supported when hash meta info is available."
         )
 
@@ -686,12 +706,12 @@ if __name__ == "__main__":
         try:
             left_it = with_hash(left_it, hasher)
         except AttributeError:
-            logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+            logger.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
             sys.exit(1)
         try:
             right_it = with_hash(right_it, hasher)
         except AttributeError:
-            logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+            logger.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
             sys.exit(1)
     elif args.by == "order":
         left_it = with_order(left_it)
@@ -704,13 +724,13 @@ if __name__ == "__main__":
     try:
         a = iterable_to_dict_by_key(args.by, left_it, apply)
     except AttributeError:
-        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_a), args.by)
+        logger.critical("%s doesn't supporting grouping by %s", funcname(iter_func_a), args.by)
         sys.exit(1)
 
     try:
         b = iterable_to_dict_by_key(args.by, right_it, apply)
     except AttributeError:
-        logging.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
+        logger.critical("%s doesn't supporting grouping by %s", funcname(iter_func_b), args.by)
         sys.exit(1)
 
     action_names = action_names_from_args(args)

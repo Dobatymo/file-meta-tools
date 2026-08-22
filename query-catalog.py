@@ -1,17 +1,14 @@
 import csv
 from operator import itemgetter
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, List, Optional
+from typing import Iterable, List, Optional
 
-from filemeta.fsreaders import FilesDB
+from filemeta.fsreaders import FilesDB, FilesTuple
 from filemeta.utils import DEFAULT_DB_PATH, signed_to_unsigned_int_64
 from genutility.datetime import datetime_from_utc_timestamp_ns
 from genutility.exceptions import assert_choices
 from genutility.file import StdoutFile
-
-if TYPE_CHECKING:
-    from filemeta.fsreaders import FilesTuple
-    from genutility.filesystem import PathType
+from genutility.filesystem import PathType
 
 fields = {
     "device": 0,
@@ -24,11 +21,11 @@ fields = {
 
 
 def dict_to_csv(
-    files: Iterable[FilesTuple], path: Optional[PathType] = None, sortby: Optional[List[str]] = None
+    files: Iterable[FilesTuple], csvpath: Optional[PathType] = None, sortby: Optional[List[str]] = None
 ) -> None:
     assert_choices("sortby", sortby, fields.keys(), optional=True)
 
-    with StdoutFile(path, "wt", encoding="utf-8", newline="") as csvfile:
+    with StdoutFile(csvpath, "wt", encoding="utf-8", newline="") as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(fields.keys())
 

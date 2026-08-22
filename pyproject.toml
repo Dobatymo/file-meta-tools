@@ -1,18 +1,68 @@
-[tool.black]
-line-length = 120
+[build-system]
+build-backend = "flit_core.buildapi"
+requires = [ "flit-core>=3.2,<4" ]
 
-[tool.isort]
-profile = "black"
-line_length = 120
+[project]
+name = "public-scripts"
+version = "0.1.0"
+description = "A collection of scripts"
+readme = "readme.md"
+authors = [
+  { name = "Dobatymo", email = "Dobatymo@users.noreply.github.com" },
+]
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "colorama>=0.4.4",
+  "filemeta>=0.0.2",
+  "genutility[rich,torrent]>=0.0.104",
+  "platformdirs>=3.5",
+  "rarfile>=4",
+  "requests>=2.25.1",
+  "send2trash>=1.8",
+  "xxhash>=3",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.14.1",
+  "numpy>=1.24.4",
+  "ruff>=0.16.3",
+]
+
+[tool.flit]
+module.name = "filemetatools"
+
+[tool.ruff]
+line-length = 120
+lint.extend-select = [
+  "B",
+  "C4",
+  "DTZ",
+  "I",
+  "PIE",
+  "RUF",
+  "S",
+  "SIM",
+  "UP",
+]
+lint.ignore = [ "S101", "SIM108" ]
+lint.pyupgrade.keep-runtime-typing = true
 
 [tool.mypy]
 ignore_missing_imports = true
-no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_configs = true
 warn_unused_ignores = true
 warn_unreachable = true
 strict_equality = true
-
-[tool.bandit]
-skips = ["B101"]
+warn_unused_configs = true
+no_implicit_optional = true

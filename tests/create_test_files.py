@@ -10,7 +10,7 @@ def create_file(path: Path, size: int) -> None:
         end = b"_END_"
         k = max(0, size - len(start) - len(end))
         b = string.ascii_letters + string.digits
-        data = start + "".join(random.choices(b, k=k)).encode("ascii") + end  # nosec
+        data = start + "".join(random.choices(b, k=k)).encode("ascii") + end  # noqa: S311
         fw.write(data[:size])
 
 
