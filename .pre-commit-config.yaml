@@ -40,6 +40,11 @@ repos:
   - id: zizmor
     language_version: python3.13
     args: [--fix=safe, --offline]
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.12.19
+  hooks:
+  - id: uv-lock
+    args: [--check]
 - repo: https://github.com/Yelp/detect-secrets
   rev: v1.5.0
   hooks:

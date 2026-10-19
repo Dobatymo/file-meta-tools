@@ -23,7 +23,7 @@ from filemeta.listreaders import (
     iter_zip,
 )
 from filemeta.utils import HashableLessThan, SmartPath, iterable_to_dict_by_key
-from genutility.args import existing_path, is_rel_path
+from genutility.args import existing_path, relative_path
 from genutility.datetime import datetime_from_utc_timestamp_ns
 from genutility.file import StdoutFile
 from genutility.filesdb import FileDbSimple, NoResult
@@ -425,8 +425,8 @@ def funcname(f: Callable) -> str:
         return f.__name__
 
 
-def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[str, str], Iterator[FileProperties]]:
-    def inner(path: str, rel_to: str) -> Iterator[FileProperties]:
+def make_rel(iter_func: Callable[[str], Iterator[FileProperties]]) -> Callable[[str, Path], Iterator[FileProperties]]:
+    def inner(path: str, rel_to: Path) -> Iterator[FileProperties]:
         for prop in iter_func(path):
             assert prop.relpath is not None
             prop.relpath = os.path.relpath(prop.relpath, rel_to)
@@ -586,14 +586,14 @@ if __name__ == "__main__":
         "--left-rel",
         nargs="+",
         default=None,
-        type=is_rel_path,
+        type=relative_path,
         help="Top level directory of left path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument(
         "--right-rel",
         nargs="+",
         default=None,
-        type=is_rel_path,
+        type=relative_path,
         help="Top level directory of right path everything will be relative to. Must match the provided paths.",
     )
     parser.add_argument("--left-type", choices=types.keys(), default="auto", help="Type of left content")
@@ -652,12 +652,12 @@ if __name__ == "__main__":
         parser.error("--left-rel or --right-rel can only be used with --by relpath")
 
     if args.left_rel is None:
-        args.left_rel = ["."] * len(args.left_paths)
+        args.left_rel = [Path(".")] * len(args.left_paths)
     elif len(args.left_rel) != len(args.left_paths):
         raise ValueError("Number of left relative paths doesn't match number of paths")
 
     if args.right_rel is None:
-        args.right_rel = ["."] * len(args.right_paths)
+        args.right_rel = [Path(".")] * len(args.right_paths)
     elif len(args.right_rel) != len(args.right_paths):
         raise ValueError("Number of right relative paths doesn't match number of paths")
 

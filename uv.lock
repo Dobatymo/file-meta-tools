@@ -658,19 +658,22 @@ wheels = [
 
 [[package]]
 name = "genutility"
-version = "0.0.121"
+version = "0.0.123"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ctypes-windows-sdk", marker = "sys_platform == 'win32'" },
     { name = "typing-extensions", version = "4.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "typing-extensions", version = "4.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/50/badeb892593cc42f2861d477efadda0e8f0eb2cf0fa11d3b0e355503cced/genutility-0.0.121.tar.gz", hash = "sha256:831ddc6cfbc5a0dcecc3a0e8e3e685f959616b7e1b1992be020e9a988f21c620", size = 216726, upload-time = "2026-07-22T21:10:46.584Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/92/fc6275fae0b5928dd8f9e9c460df18f3c7d126bf7e0aaa805d4f3b71f462/genutility-0.0.123.tar.gz", hash = "sha256:30b52ff546075ec5473de818a2d2ea251f81ff0c6fb3c540e48cf8e3ebff79b0", size = 219462, upload-time = "2026-09-03T19:19:07.009Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/b1/8a78b0e98d787e0dfb2d6c5ce629ab5d7f7aa49e8935cbbcfadd0f852e76/genutility-0.0.121-py3-none-any.whl", hash = "sha256:c2dd7f854a3f7ce6e07efcfd654c148c2a819aaa0c8d45d01156dda36364cf1e", size = 254161, upload-time = "2026-07-22T21:10:44.502Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/21/aded1d87ff3f66d8aad8955685db8b1ee4d7a56858e47a89417fc7f3de06/genutility-0.0.123-py3-none-any.whl", hash = "sha256:2997e4573996908957c936180dc15ec4287c962d8a14fd08d7ba79eda60ffeae", size = 256893, upload-time = "2026-09-03T19:19:04.41Z" },
 ]
 
 [package.optional-dependencies]
+filesdb = [
+    { name = "tls-property" },
+]
 json = [
     { name = "jsonschema", version = "4.23.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "jsonschema", version = "4.25.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
@@ -1628,7 +1631,7 @@ source = { editable = "." }
 dependencies = [
     { name = "colorama" },
     { name = "filemeta" },
-    { name = "genutility", extra = ["rich", "torrent"] },
+    { name = "genutility", extra = ["filesdb", "rich", "torrent"] },
     { name = "platformdirs", version = "4.3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "platformdirs", version = "4.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "platformdirs", version = "4.11.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -1659,7 +1662,7 @@ dev = [
 requires-dist = [
     { name = "colorama", specifier = ">=0.4.4" },
     { name = "filemeta", specifier = ">=0.0.2" },
-    { name = "genutility", extras = ["rich", "torrent"], specifier = ">=0.0.104" },
+    { name = "genutility", extras = ["filesdb", "rich", "torrent"], specifier = ">=0.0.123" },
     { name = "platformdirs", specifier = ">=3.5" },
     { name = "rarfile", specifier = ">=4" },
     { name = "requests", specifier = ">=2.25.1" },
@@ -2573,6 +2576,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/ae/a596dcd327b53da7ac336f3fbf54049033d492c79d7cce5027f7b2bea8da/simplejson-4.1.1-cp39-cp39-win_amd64.whl", hash = "sha256:4c1eecc2d6a186eaf5d111cf9b311fa9a9ecf68703db7b63ed5938049f3e74f5", size = 90478, upload-time = "2026-04-24T19:24:56.42Z" },
     { url = "https://files.pythonhosted.org/packages/ce/6a/8b74c52ffd33dbbde00fe7251fee6a0acdc8cea33f7a43805aed258fb79b/simplejson-4.1.1-py3-none-any.whl", hash = "sha256:2ce92b3748f02423e26d2bfb636fb9d7a8f67c8f5854dcae69d350d123b2eee2", size = 69195, upload-time = "2026-04-24T19:24:57.962Z" },
 ]
+
+[[package]]
+name = "tls-property"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/83/441bac852a9fb9d6d6c7af42a1571052668d6c6a9945fe21ce7e0060d6ee/tls-property-1.1.0.tar.gz", hash = "sha256:cddf1152620e7c09307de5348a10d945070f0521183738a1fabaff17ad56343d", size = 2252, upload-time = "2019-08-05T13:20:38.898Z" }
 
 [[package]]
 name = "tomli"
